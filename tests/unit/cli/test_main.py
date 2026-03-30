@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import subprocess
 import sys
 
 import pytest
@@ -69,3 +70,44 @@ class TestCliEdgeCases:
         monkeypatch.setattr("sys.stdin", io.StringIO("some text"))
         exit_code = main([])
         assert exit_code == 0
+
+    def test_cli_file_not_found(self, capsys):
+        """Non-existent file argument returns exit code 1 with error."""
+        from token_sieve.cli.main import main
+
+        exit_code = main(["/nonexistent/path/file.txt"])
+        captured = capsys.readouterr()
+        assert exit_code == 1
+        assert "error" in captured.err.lower()
+
+
+class TestCliIntegration:
+    """Integration tests: full pipeline round-trip."""
+
+    def test_main_full_roundtrip(self, capsys, monkeypatch):
+        """Invoke main() with real text, verify stdout and stderr."""
+        from token_sieve.cli.main import main
+
+        text = "The quick brown fox jumps over the lazy dog"
+        monkeypatch.setattr("sys.stdin", io.StringIO(text))
+        exit_code = main([])
+        captured = capsys.readouterr()
+
+        assert exit_code == 0
+        assert text in captured.out
+        assert "Original:" in captured.err
+        assert "Compressed:" in captured.err
+        assert "Savings:" in captured.err
+
+    def test_cli_via_subprocess(self):
+        """Pipe text through python -m token_sieve via subprocess."""
+        result = subprocess.run(
+            [sys.executable, "-m", "token_sieve"],
+            input="hello world",
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 0
+        assert "hello world" in result.stdout
+        assert "Savings:" in result.stderr
