@@ -185,3 +185,29 @@ class TestCompressionPipeline:
 
         assert events[0].original_tokens == 2  # len("hi")
         assert events[0].compressed_tokens == 6  # len("[c] hi")
+
+
+class TestPipelineIntegration:
+    """Integration test: pipeline with real CharEstimateCounter."""
+
+    def test_pipeline_with_char_estimate_counter(self):
+        from token_sieve.domain.counters import CharEstimateCounter
+        from token_sieve.domain.pipeline import CompressionPipeline
+
+        counter = CharEstimateCounter()
+        pipeline = CompressionPipeline(counter=counter)
+        pipeline.register(ContentType.TEXT, AlwaysCompressStrategy(prefix="[compressed]"))
+
+        # "hello world" = 11 chars -> CharEstimateCounter: max(1, 11//4) = 2
+        envelope = ContentEnvelope(content="hello world", content_type=ContentType.TEXT)
+        result, events = pipeline.process(envelope)
+
+        assert result.content == "[compressed] hello world"
+        assert len(events) == 1
+
+        event = events[0]
+        assert event.original_tokens == 2  # 11 chars -> 11//4 = 2
+        # "[compressed] hello world" = 24 chars -> 24//4 = 6
+        assert event.compressed_tokens == 6
+        assert event.strategy_name == "AlwaysCompressStrategy"
+        assert event.content_type == ContentType.TEXT
