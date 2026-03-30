@@ -16,6 +16,9 @@ dev = [
     "pytest-cov>=5.0",
 ]
 
+[project.scripts]
+token-sieve = "token_sieve.cli.main:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/token_sieve"]
 
