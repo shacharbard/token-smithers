@@ -1,0 +1,7 @@
+{"ts":"2026-03-30T17:45:37Z","event_id":"55e69a21-439e-4fee-a4f8-c1fe636e9150","correlation_id":"7a51ee8d-9357-4a95-a0b9-c9e453dbc24e","event":"phase_start","phase":1}
+{"ts":"2026-03-30T17:52:12Z","event_id":"2be98952-84c5-497d-bed0-292237c199ca","correlation_id":"7a51ee8d-9357-4a95-a0b9-c9e453dbc24e","event":"plan_end","phase":1,"plan":1,"data":{"status":"complete"}}
+{"ts":"2026-03-30T17:52:12Z","event_id":"7eab84a8-4982-4a3e-bf04-cb6f1e1f6f39","correlation_id":"7a51ee8d-9357-4a95-a0b9-c9e453dbc24e","event":"plan_start","phase":1,"plan":2}
+{"ts":"2026-03-30T17:52:12Z","event_id":"205bfbab-df15-4bd4-8b27-0aa2fa19ddde","correlation_id":"7a51ee8d-9357-4a95-a0b9-c9e453dbc24e","event":"plan_start","phase":1,"plan":3}
+{"ts":"2026-03-30T17:58:00Z","event_id":"85105c8d-c3ba-4d53-b2d1-bab0d315bb29","correlation_id":"7a51ee8d-9357-4a95-a0b9-c9e453dbc24e","event":"plan_end","phase":1,"plan":2,"data":{"status":"complete"}}
+{"ts":"2026-03-30T17:58:00Z","event_id":"a15bbda1-68c0-4be0-9027-a9e11874d436","correlation_id":"7a51ee8d-9357-4a95-a0b9-c9e453dbc24e","event":"plan_end","phase":1,"plan":3,"data":{"status":"complete"}}
+{"ts":"2026-03-30T17:58:00Z","event_id":"c3d2c6b0-17c5-41eb-a15e-139835e23e5a","correlation_id":"7a51ee8d-9357-4a95-a0b9-c9e453dbc24e","event":"phase_end","phase":1,"data":{"plans_completed":"3","total_tasks":"13"}}

@@ -148,3 +148,27 @@
   "title": "",
   "message": "Claude Code needs your attention"
 }
+{
+  "timestamp": "2026-03-30T17:59:20Z",
+  "type": "idle_prompt",
+  "title": "",
+  "message": "Claude is waiting for your input"
+}
+{
+  "timestamp": "2026-03-30T18:05:59Z",
+  "type": "permission_prompt",
+  "title": "",
+  "message": "Claude Code needs your attention"
+}
+{
+  "timestamp": "2026-03-30T18:08:09Z",
+  "type": "permission_prompt",
+  "title": "",
+  "message": "Claude Code needs your attention"
+}
+{
+  "timestamp": "2026-03-30T18:09:10Z",
+  "type": "permission_prompt",
+  "title": "",
+  "message": "Claude needs your permission to use Bash"
+}

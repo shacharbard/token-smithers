@@ -174,3 +174,36 @@
     "other": 9
   }
 }
+{
+  "timestamp": "2026-03-30T17:58:19Z",
+  "duration_ms": 0,
+  "cost_usd": 0,
+  "tokens_in": 0,
+  "tokens_out": 0,
+  "model": "unknown",
+  "branch": "main"
+}
+{
+  "timestamp": "2026-03-30T17:58:19Z",
+  "type": "cost_summary",
+  "costs": {
+    "other": 832,
+    "dev": 53
+  }
+}
+{
+  "timestamp": "2026-03-30T18:00:44Z",
+  "duration_ms": 0,
+  "cost_usd": 0,
+  "tokens_in": 0,
+  "tokens_out": 0,
+  "model": "unknown",
+  "branch": "main"
+}
+{
+  "timestamp": "2026-03-30T18:00:44Z",
+  "type": "cost_summary",
+  "costs": {
+    "other": 201
+  }
+}

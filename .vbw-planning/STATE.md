@@ -4,10 +4,10 @@
 **Milestone:** token-sieve
 
 ## Current Phase
-Phase: 1 of 4
-Plans: 0/3
-Progress: 0%
-Status: active
+Phase: 2 of 4 (Mcp Proxy Free Adapters)
+Plans: 3/3
+Progress: 100%
+Status: ready
 
 ## Phase Status
 - **Phase 1:** Pending planning
