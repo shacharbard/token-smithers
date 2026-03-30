@@ -162,3 +162,14 @@ class CompressionStrategyContract:
         env = make_envelope(content="hello world " * 50, content_type=ContentType.CODE)
         result = strategy.compress(env)
         assert result.content_type == env.content_type
+
+
+# --- Contract test validation with MockStrategy ---
+
+
+class TestMockStrategy(CompressionStrategyContract):
+    """Validates the contract test pattern works end-to-end with MockStrategy."""
+
+    @pytest.fixture
+    def strategy(self, mock_strategy):
+        return mock_strategy

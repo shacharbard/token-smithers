@@ -12,7 +12,6 @@ from token_sieve.domain.model import (
     CompressionEvent,
     ContentEnvelope,
     ContentType,
-    TokenBudget,
 )
 
 
@@ -132,36 +131,36 @@ class TestCompressionEvent:
 
 
 class TestTokenBudget:
-    def test_construction(self):
-        budget = TokenBudget(total=1000, used=200)
+    def test_construction(self, make_budget):
+        budget = make_budget(total=1000, used=200)
         assert budget.total == 1000
         assert budget.used == 200
 
-    def test_remaining(self):
-        budget = TokenBudget(total=1000, used=300)
+    def test_remaining(self, make_budget):
+        budget = make_budget(total=1000, used=300)
         assert budget.remaining == 700
 
-    def test_is_exceeded_false(self):
-        budget = TokenBudget(total=1000, used=300)
+    def test_is_exceeded_false(self, make_budget):
+        budget = make_budget(total=1000, used=300)
         assert budget.is_exceeded is False
 
-    def test_is_exceeded_true(self):
-        budget = TokenBudget(total=1000, used=1100)
+    def test_is_exceeded_true(self, make_budget):
+        budget = make_budget(total=1000, used=1100)
         assert budget.is_exceeded is True
 
-    def test_is_exceeded_at_boundary(self):
-        budget = TokenBudget(total=1000, used=1000)
+    def test_is_exceeded_at_boundary(self, make_budget):
+        budget = make_budget(total=1000, used=1000)
         assert budget.is_exceeded is False
 
-    def test_consume_returns_new_instance(self):
-        budget = TokenBudget(total=1000, used=200)
+    def test_consume_returns_new_instance(self, make_budget):
+        budget = make_budget(total=1000, used=200)
         new_budget = budget.consume(100)
         assert new_budget.used == 300
         assert new_budget.total == 1000
         assert budget.used == 200  # original unchanged
 
-    def test_frozen_immutability(self):
-        budget = TokenBudget(total=1000, used=0)
+    def test_frozen_immutability(self, make_budget):
+        budget = make_budget()
         with pytest.raises(dataclasses.FrozenInstanceError):
             budget.used = 500
 
@@ -183,6 +182,13 @@ class TestCompressedResult:
             envelope=env, events=[make_event(), make_event()]
         )
         assert isinstance(result.events, tuple)
+
+    def test_events_accepts_tuple_directly(self, make_envelope, make_event):
+        env = make_envelope(content="result")
+        events_tuple = (make_event(),)
+        result = CompressedResult(envelope=env, events=events_tuple)
+        assert isinstance(result.events, tuple)
+        assert len(result.events) == 1
 
     def test_frozen_immutability(self, make_envelope):
         env = make_envelope()

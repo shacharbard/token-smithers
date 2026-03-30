@@ -1,5 +1,9 @@
 """Domain test fixtures: factory functions for value objects."""
 
+from __future__ import annotations
+
+import dataclasses
+
 import pytest
 
 
@@ -43,3 +47,35 @@ def make_event():
         )
 
     return _factory
+
+
+@pytest.fixture
+def make_budget():
+    """Factory fixture for TokenBudget instances."""
+
+    def _factory(total=1000, used=0):
+        from token_sieve.domain.model import TokenBudget
+
+        return TokenBudget(total=total, used=used)
+
+    return _factory
+
+
+@pytest.fixture
+def mock_strategy():
+    """A MockStrategy that satisfies CompressionStrategy Protocol.
+
+    Always handles any envelope, returns it with '[compressed] ' prefix.
+    """
+    from token_sieve.domain.model import ContentEnvelope
+
+    class MockStrategy:
+        def can_handle(self, envelope: ContentEnvelope) -> bool:
+            return True
+
+        def compress(self, envelope: ContentEnvelope) -> ContentEnvelope:
+            return dataclasses.replace(
+                envelope, content=f"[compressed] {envelope.content}"
+            )
+
+    return MockStrategy()
