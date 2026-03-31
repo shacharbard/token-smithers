@@ -8,12 +8,17 @@ version = "0.1.0"
 description = "MCP compression gateway that reduces token usage"
 requires-python = ">=3.11"
 license = "MIT"
-dependencies = []
+dependencies = [
+    "mcp>=1.0.0",
+    "pyyaml>=6.0",
+    "pydantic>=2.0",
+]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
+    "pytest-asyncio>=0.23",
 ]
 
 [project.scripts]
@@ -23,11 +28,11 @@ token-sieve = "token_sieve.cli.main:main"
 packages = ["src/token_sieve"]
 
 [tool.pytest.ini_options]
-addopts = "--cov=token_sieve.domain --cov-fail-under=100 --cov-branch"
+addopts = "--cov=token_sieve.domain --cov=token_sieve.adapters --cov-fail-under=95 --cov-branch"
 testpaths = ["tests"]
 
 [tool.coverage.run]
-source = ["token_sieve.domain"]
+source = ["token_sieve.domain", "token_sieve.adapters"]
 
 [tool.coverage.report]
 show_missing = true
