@@ -158,3 +158,50 @@ class TestCliHelp:
         captured = capsys.readouterr()
         assert "pipe" in captured.out.lower()
         assert "proxy" in captured.out.lower() or "mcp" in captured.out.lower()
+
+
+class TestCliErrorHandling:
+    """Finding 5: main() must log tracebacks and handle CancelledError."""
+
+    def test_exception_logs_traceback(self, caplog):
+        """Exceptions in proxy mode must be logged with full traceback."""
+        import logging
+
+        from token_sieve.cli.main import main
+
+        mock_run = AsyncMock(side_effect=RuntimeError("boom"))
+        with (
+            patch("token_sieve.cli.main._run_proxy", mock_run),
+            caplog.at_level(logging.ERROR, logger="token_sieve.cli.main"),
+        ):
+            exit_code = main([])
+
+        assert exit_code == 1
+        # logger.exception() should produce a log record with exc_info
+        assert any("boom" in r.message for r in caplog.records), (
+            f"Expected logger.exception with 'boom', got: {[r.message for r in caplog.records]}"
+        )
+        # Verify traceback is attached (exc_info is set)
+        assert any(r.exc_info for r in caplog.records), (
+            "Expected exc_info in log records for full traceback"
+        )
+
+    def test_cancelled_error_returns_zero(self):
+        """asyncio.CancelledError should be treated as normal shutdown (exit 0)."""
+        import asyncio
+
+        from token_sieve.cli.main import main
+
+        mock_run = AsyncMock(side_effect=asyncio.CancelledError())
+        with patch("token_sieve.cli.main._run_proxy", mock_run):
+            exit_code = main([])
+        assert exit_code == 0
+
+    def test_keyboard_interrupt_returns_130(self):
+        """KeyboardInterrupt should return 130 (standard SIGINT exit code)."""
+        from token_sieve.cli.main import main
+
+        mock_run = AsyncMock(side_effect=KeyboardInterrupt())
+        with patch("token_sieve.cli.main._run_proxy", mock_run):
+            exit_code = main([])
+        assert exit_code == 130

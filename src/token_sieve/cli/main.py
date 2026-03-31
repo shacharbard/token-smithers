@@ -8,8 +8,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from token_sieve.domain.counters import CharEstimateCounter
 from token_sieve.domain.model import ContentEnvelope, ContentType
@@ -167,6 +170,11 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         return asyncio.run(_run_proxy(args.config))
+    except asyncio.CancelledError:
+        return 0
+    except KeyboardInterrupt:
+        return 130
     except Exception as exc:
+        logger.exception("Proxy failed: %s", exc)
         print(f"Error: {exc}", file=sys.stderr)
         return 1
