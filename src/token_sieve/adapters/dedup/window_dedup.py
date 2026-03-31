@@ -28,8 +28,10 @@ class WindowDeduplicationStrategy:
         max_window: int = 50,
         min_content_length: int = 100,
     ) -> None:
-        self._buffer: deque[tuple[str, str, str]] = deque(maxlen=max_window)
+        # Buffer entries: (tool_name, content_hash, summary, call_number)
+        self._buffer: deque[tuple[str, str, str, int]] = deque(maxlen=max_window)
         self._min_content_length = min_content_length
+        self._call_counter: int = 0
 
     def is_duplicate(
         self,
@@ -46,14 +48,20 @@ class WindowDeduplicationStrategy:
         content_hash = self._hash(envelope.content)
 
         # Search buffer for matching hash
-        for _tool_name, stored_hash, _summary in self._buffer:
+        for i, (tool_name, stored_hash, summary, call_num) in enumerate(
+            self._buffer
+        ):
             if stored_hash == content_hash:
+                # Refresh: remove old entry, re-append at end to prevent eviction
+                del self._buffer[i]
+                self._buffer.append((tool_name, stored_hash, summary, call_num))
                 return True
 
-        # Not a duplicate — record in buffer
+        # Not a duplicate — record in buffer with monotonic call number
+        self._call_counter += 1
         tool_name = str(envelope.metadata.get("tool_name", "unknown"))
         summary = envelope.content[:60].replace("\n", " ")
-        self._buffer.append((tool_name, content_hash, summary))
+        self._buffer.append((tool_name, content_hash, summary, self._call_counter))
         return False
 
     def get_reference(
@@ -64,11 +72,11 @@ class WindowDeduplicationStrategy:
         """Return a backreference string for previously-seen content."""
         content_hash = self._hash(envelope.content)
 
-        for idx, (tool_name, stored_hash, summary) in enumerate(self._buffer, start=1):
+        for tool_name, stored_hash, summary, call_num in self._buffer:
             if stored_hash == content_hash:
-                return f"[Same as call #{idx} ({tool_name}): {summary}]"
+                return f"[Same as call #{call_num} ({tool_name}): {summary}]"
 
-        return f"[Reference not found for content]"
+        return "[Reference not found for content]"
 
     @staticmethod
     def _hash(content: str) -> str:

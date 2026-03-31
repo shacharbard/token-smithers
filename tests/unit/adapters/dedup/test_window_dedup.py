@@ -175,3 +175,44 @@ class TestWindowDedupSpecific:
         ref = dedup_strategy.get_reference(envelope, session)
         assert isinstance(ref, str)
         assert len(ref) > 0
+
+
+class TestWindowDedupCallOrderBackreference:
+    """Finding 4: backreferences must use monotonic call order, not deque position."""
+
+    def test_backreference_uses_stable_call_number(self, make_envelope, make_session):
+        """After inserting A, B, C, A's reference should say call #1 not shift."""
+        dedup = WindowDeduplicationStrategy(max_window=50)
+        session = make_session()
+        env_a = make_envelope(content="content A repeated " * 10)
+        env_b = make_envelope(content="content B repeated " * 10)
+        env_c = make_envelope(content="content C repeated " * 10)
+        # A is call #1, B is call #2, C is call #3
+        dedup.is_duplicate(env_a, session)
+        dedup.is_duplicate(env_b, session)
+        dedup.is_duplicate(env_c, session)
+        ref_a = dedup.get_reference(env_a, session)
+        ref_b = dedup.get_reference(env_b, session)
+        # A should always be call #1, B should always be call #2
+        assert "call #1" in ref_a
+        assert "call #2" in ref_b
+
+    def test_duplicate_hit_refreshes_buffer_entry(self, make_envelope, make_session):
+        """Duplicate content should be refreshed in the window to prevent eviction."""
+        dedup = WindowDeduplicationStrategy(max_window=5)
+        session = make_session()
+        env_target = make_envelope(content="target content to keep " * 10)
+        # Insert target as call #1
+        dedup.is_duplicate(env_target, session)
+        # Fill buffer with 4 more unique items (calls #2-5)
+        for i in range(4):
+            env = make_envelope(content=f"filler content number {i} " * 10)
+            dedup.is_duplicate(env, session)
+        # Hit target again as duplicate -- should refresh it in the window
+        assert dedup.is_duplicate(env_target, session) is True
+        # Now add 4 more unique items (calls #7-10), would evict if not refreshed
+        for i in range(4):
+            env = make_envelope(content=f"new filler content {i} " * 10)
+            dedup.is_duplicate(env, session)
+        # Target should still be in the window due to refresh
+        assert dedup.is_duplicate(env_target, session) is True
