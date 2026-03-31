@@ -24,3 +24,10 @@ class ToolMetadata:
     description: str
     input_schema: dict[str, Any] = field(default_factory=dict)
     server_id: str = "default"
+
+    def __hash__(self) -> int:
+        """Hash using JSON-stable representation of input_schema."""
+        import json
+
+        schema_key = json.dumps(self.input_schema, sort_keys=True)
+        return hash((self.name, self.title, self.description, schema_key, self.server_id))
