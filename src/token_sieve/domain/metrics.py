@@ -6,17 +6,22 @@ Zero external dependencies -- stdlib only.
 
 from __future__ import annotations
 
+from collections import deque
+
 from token_sieve.domain.model import CompressionEvent
+
+DEFAULT_MAX_EVENTS = 10_000
 
 
 class InMemoryMetricsCollector:
-    """List-backed metrics collector for Phase 1.
+    """Deque-backed metrics collector for Phase 1.
 
     Satisfies MetricsCollector Protocol structurally.
+    Evicts oldest events when max_events is reached.
     """
 
-    def __init__(self) -> None:
-        self._events: list[CompressionEvent] = []
+    def __init__(self, max_events: int = DEFAULT_MAX_EVENTS) -> None:
+        self._events: deque[CompressionEvent] = deque(maxlen=max_events)
 
     def record(self, event: CompressionEvent) -> None:
         """Record a compression event."""

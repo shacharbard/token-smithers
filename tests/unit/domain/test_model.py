@@ -12,6 +12,7 @@ from token_sieve.domain.model import (
     CompressionEvent,
     ContentEnvelope,
     ContentType,
+    TokenBudget,
 )
 
 
@@ -89,6 +90,36 @@ class TestContentEnvelope:
         # Should not raise
         hash(env)
 
+    # --- Finding 1: unhashable metadata rejected ---
+
+    def test_unhashable_metadata_list_rejected(self):
+        """Metadata containing a list value must raise TypeError."""
+        with pytest.raises(TypeError, match="hashable"):
+            ContentEnvelope(
+                content="x",
+                content_type=ContentType.TEXT,
+                metadata={"key": [1, 2, 3]},
+            )
+
+    def test_unhashable_metadata_nested_dict_rejected(self):
+        """Metadata containing a nested dict value must raise TypeError."""
+        with pytest.raises(TypeError, match="hashable"):
+            ContentEnvelope(
+                content="x",
+                content_type=ContentType.TEXT,
+                metadata={"key": {"nested": "dict"}},
+            )
+
+    def test_hashable_scalar_metadata_accepted(self):
+        """Metadata with str, int, float, bool, None values must be accepted."""
+        env = ContentEnvelope(
+            content="x",
+            content_type=ContentType.TEXT,
+            metadata={"s": "val", "i": 42, "f": 3.14, "b": True, "n": None},
+        )
+        # Should not raise and should be hashable
+        hash(env)
+
     def test_content_type_variations(self):
         for ct in ContentType:
             env = ContentEnvelope(content="test", content_type=ct)
@@ -163,6 +194,21 @@ class TestTokenBudget:
         budget = make_budget()
         with pytest.raises(dataclasses.FrozenInstanceError):
             budget.used = 500
+
+    # --- Finding 2: negative values rejected ---
+
+    def test_negative_total_raises(self):
+        with pytest.raises(ValueError, match="total"):
+            TokenBudget(total=-1, used=0)
+
+    def test_negative_used_raises(self):
+        with pytest.raises(ValueError, match="used"):
+            TokenBudget(total=100, used=-1)
+
+    def test_negative_consume_raises(self, make_budget):
+        budget = make_budget(total=100, used=0)
+        with pytest.raises(ValueError, match="tokens"):
+            budget.consume(-10)
 
 
 # --- CompressedResult ---

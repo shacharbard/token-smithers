@@ -103,3 +103,27 @@ class TestInMemoryMetricsCollector:
         assert callable(collector.record)
         assert callable(collector.session_summary)
         assert callable(collector.strategy_breakdown)
+
+    # --- Finding 6: bounded growth ---
+
+    def test_evicts_oldest_at_max_events(self, make_event):
+        from token_sieve.domain.metrics import InMemoryMetricsCollector
+
+        collector = InMemoryMetricsCollector(max_events=3)
+        for i in range(5):
+            collector.record(make_event(original_tokens=i))
+
+        assert len(collector._events) == 3
+        # Oldest (i=0, i=1) evicted; remaining are i=2, i=3, i=4
+        assert collector._events[0].original_tokens == 2
+        assert collector._events[-1].original_tokens == 4
+
+    def test_default_max_events_is_10000(self):
+        from token_sieve.domain.metrics import (
+            DEFAULT_MAX_EVENTS,
+            InMemoryMetricsCollector,
+        )
+
+        assert DEFAULT_MAX_EVENTS == 10_000
+        collector = InMemoryMetricsCollector()
+        assert collector._events.maxlen == 10_000

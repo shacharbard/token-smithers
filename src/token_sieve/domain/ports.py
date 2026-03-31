@@ -6,9 +6,12 @@ Adapters satisfy these structurally (duck typing). Zero external dependencies.
 
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from token_sieve.domain.model import CompressionEvent, ContentEnvelope
+
+if TYPE_CHECKING:
+    from token_sieve.domain.session import SessionContext
 
 
 class CompressionStrategy(Protocol):
@@ -29,11 +32,11 @@ class CompressionStrategy(Protocol):
 class DeduplicationStrategy(Protocol):
     """Interface for detecting and handling duplicate content."""
 
-    def is_duplicate(self, envelope: ContentEnvelope, session: Any) -> bool:
+    def is_duplicate(self, envelope: ContentEnvelope, session: SessionContext) -> bool:
         """Whether this envelope's content has been seen before in the session."""
         ...
 
-    def get_reference(self, envelope: ContentEnvelope, session: Any) -> str:
+    def get_reference(self, envelope: ContentEnvelope, session: SessionContext) -> str:
         """Return a backreference string for previously-seen content."""
         ...
 
@@ -49,11 +52,11 @@ class BackendToolAdapter(Protocol):
 class SessionRepository(Protocol):
     """Interface for session state persistence."""
 
-    def get(self, session_id: str) -> Any | None:
+    def get(self, session_id: str) -> SessionContext | None:
         """Retrieve a session by ID, or None if not found."""
         ...
 
-    def save(self, session: Any) -> None:
+    def save(self, session: SessionContext) -> None:
         """Persist a session."""
         ...
 

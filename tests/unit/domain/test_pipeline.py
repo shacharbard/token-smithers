@@ -58,6 +58,26 @@ class UpperCaseStrategy:
         )
 
 
+class RaisingCanHandleStrategy:
+    """Mock strategy whose can_handle() raises."""
+
+    def can_handle(self, envelope: ContentEnvelope) -> bool:
+        raise RuntimeError("can_handle exploded")
+
+    def compress(self, envelope: ContentEnvelope) -> ContentEnvelope:
+        return envelope
+
+
+class RaisingCompressStrategy:
+    """Mock strategy whose compress() raises."""
+
+    def can_handle(self, envelope: ContentEnvelope) -> bool:
+        return True
+
+    def compress(self, envelope: ContentEnvelope) -> ContentEnvelope:
+        raise RuntimeError("compress exploded")
+
+
 # ---------------------------------------------------------------------------
 # Mock token counter
 # ---------------------------------------------------------------------------
@@ -185,6 +205,54 @@ class TestCompressionPipeline:
 
         assert events[0].original_tokens == 2  # len("hi")
         assert events[0].compressed_tokens == 6  # len("[c] hi")
+
+
+class TestPipelineErrorBoundary:
+    """Finding 3: strategy exceptions must not abort the chain."""
+
+    def test_raising_can_handle_continues_chain(self, capsys):
+        from token_sieve.domain.pipeline import CompressionPipeline
+
+        counter = FakeTokenCounter()
+        pipeline = CompressionPipeline(counter=counter)
+        pipeline.register(ContentType.TEXT, RaisingCanHandleStrategy())
+        pipeline.register(ContentType.TEXT, AlwaysCompressStrategy(prefix="[ok]"))
+
+        envelope = ContentEnvelope(content="hello", content_type=ContentType.TEXT)
+        result, events = pipeline.process(envelope)
+
+        # The raising strategy is skipped, the second strategy runs
+        assert result.content == "[ok] hello"
+        assert len(events) == 1
+        assert events[0].strategy_name == "AlwaysCompressStrategy"
+
+    def test_raising_compress_preserves_envelope(self, capsys):
+        from token_sieve.domain.pipeline import CompressionPipeline
+
+        counter = FakeTokenCounter()
+        pipeline = CompressionPipeline(counter=counter)
+        pipeline.register(ContentType.TEXT, RaisingCompressStrategy())
+
+        envelope = ContentEnvelope(content="hello", content_type=ContentType.TEXT)
+        result, events = pipeline.process(envelope)
+
+        # Envelope preserved, no event emitted for failing strategy
+        assert result.content == "hello"
+        assert events == []
+
+    def test_raising_strategy_emits_stderr_warning(self, capsys):
+        from token_sieve.domain.pipeline import CompressionPipeline
+
+        counter = FakeTokenCounter()
+        pipeline = CompressionPipeline(counter=counter)
+        pipeline.register(ContentType.TEXT, RaisingCompressStrategy())
+
+        envelope = ContentEnvelope(content="hello", content_type=ContentType.TEXT)
+        pipeline.process(envelope)
+
+        captured = capsys.readouterr()
+        assert "RaisingCompressStrategy" in captured.err
+        assert "compress exploded" in captured.err
 
 
 class TestPipelineIntegration:

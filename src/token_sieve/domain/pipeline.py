@@ -7,6 +7,7 @@ Zero external dependencies -- stdlib only.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -52,18 +53,37 @@ class CompressionPipeline:
         chain = self._routes.get(envelope.content_type, [])
 
         for strategy in chain:
-            if not strategy.can_handle(envelope):
+            strategy_name = type(strategy).__name__
+            try:
+                if not strategy.can_handle(envelope):
+                    continue
+            except Exception as exc:
+                print(
+                    f"Warning: {strategy_name}.can_handle() raised "
+                    f"{type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
                 continue
 
-            original_tokens = self._counter.count(envelope.content)
-            compressed_envelope = strategy.compress(envelope)
-            compressed_tokens = self._counter.count(compressed_envelope.content)
+            try:
+                original_tokens = self._counter.count(envelope.content)
+                compressed_envelope = strategy.compress(envelope)
+                compressed_tokens = self._counter.count(
+                    compressed_envelope.content
+                )
+            except Exception as exc:
+                print(
+                    f"Warning: {strategy_name}.compress() raised "
+                    f"{type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+                continue
 
             events.append(
                 CompressionEvent(
                     original_tokens=original_tokens,
                     compressed_tokens=compressed_tokens,
-                    strategy_name=type(strategy).__name__,
+                    strategy_name=strategy_name,
                     content_type=envelope.content_type,
                 )
             )

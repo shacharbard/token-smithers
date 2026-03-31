@@ -114,3 +114,28 @@ class TestInMemorySessionRepo:
         # Verify callable
         assert callable(repo.get)
         assert callable(repo.save)
+
+    # --- Finding 6: bounded growth ---
+
+    def test_evicts_oldest_session_at_cap(self):
+        from token_sieve.domain.session import (
+            DEFAULT_MAX_SESSIONS,
+            InMemorySessionRepo,
+            SessionContext,
+        )
+
+        repo = InMemorySessionRepo(max_sessions=3)
+        for i in range(5):
+            repo.save(SessionContext(session_id=f"s{i}"))
+
+        # s0 and s1 evicted (oldest by created_at)
+        assert repo.get("s0") is None
+        assert repo.get("s1") is None
+        assert repo.get("s2") is not None
+        assert repo.get("s3") is not None
+        assert repo.get("s4") is not None
+
+    def test_default_max_sessions_is_100(self):
+        from token_sieve.domain.session import DEFAULT_MAX_SESSIONS
+
+        assert DEFAULT_MAX_SESSIONS == 100

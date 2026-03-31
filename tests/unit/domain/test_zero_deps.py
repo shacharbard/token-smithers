@@ -6,8 +6,8 @@ If any test fails, an accidental third-party dependency leaked into domain/.
 
 from __future__ import annotations
 
+import ast
 import importlib
-import pkgutil
 import subprocess
 import sys
 
@@ -76,37 +76,33 @@ class TestDomainZeroDependencies:
                 pass
 
         for mod in domain_modules:
-            # Get all names that look like module-level imports
             source_file = getattr(mod, "__file__", None)
             if source_file is None:
                 continue
 
-            with open(source_file) as f:
+            with open(source_file, encoding="utf-8") as f:
                 source = f.read()
 
-            # Parse import statements from source
-            for line in source.splitlines():
-                stripped = line.strip()
-                if stripped.startswith("import ") or stripped.startswith("from "):
-                    # Extract the top-level module name
-                    if stripped.startswith("from "):
-                        parts = stripped.split()
-                        if len(parts) >= 2:
-                            top_module = parts[1].split(".")[0]
-                    else:
-                        parts = stripped.split()
-                        if len(parts) >= 2:
-                            top_module = parts[1].split(".")[0]
-                        else:
+            # Use ast.parse for robust import extraction
+            tree = ast.parse(source, filename=source_file)
+            for node in ast.iter_child_nodes(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        top_module = alias.name.split(".")[0]
+                        if top_module == "token_sieve":
                             continue
-
-                    # Skip relative imports and self-imports
-                    if top_module.startswith(".") or top_module == "token_sieve":
+                        assert top_module in stdlib_names, (
+                            f"Module {mod.__name__} imports '{top_module}' "
+                            f"which is not in stdlib"
+                        )
+                elif isinstance(node, ast.ImportFrom):
+                    if node.level > 0:  # relative import
                         continue
-                    # Skip __future__
-                    if top_module == "__future__":
+                    if node.module is None:
                         continue
-
+                    top_module = node.module.split(".")[0]
+                    if top_module in ("token_sieve", "__future__"):
+                        continue
                     assert top_module in stdlib_names, (
                         f"Module {mod.__name__} imports '{top_module}' "
                         f"which is not in stdlib"

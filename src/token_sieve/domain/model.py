@@ -9,7 +9,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from enum import Enum, auto
 from types import MappingProxyType
-from typing import Any
+from typing import Union
+
+HashableScalar = Union[str, int, float, bool, None]
 
 
 class ContentType(Enum):
@@ -32,7 +34,7 @@ class ContentEnvelope:
 
     content: str
     content_type: ContentType
-    metadata: MappingProxyType[str, Any] = field(
+    metadata: MappingProxyType[str, HashableScalar] = field(
         default_factory=lambda: MappingProxyType({})
     )
 
@@ -44,6 +46,15 @@ class ContentEnvelope:
             object.__setattr__(
                 self, "metadata", MappingProxyType(self.metadata)
             )
+        # Validate all metadata values are hashable scalars
+        _allowed = (str, int, float, bool, type(None))
+        for key, value in self.metadata.items():
+            if not isinstance(value, _allowed):
+                raise TypeError(
+                    f"metadata values must be hashable scalars "
+                    f"(str|int|float|bool|None), got {type(value).__name__} "
+                    f"for key {key!r}"
+                )
 
     def __hash__(self) -> int:
         return hash((self.content, self.content_type, tuple(sorted(self.metadata.items()))))
@@ -76,6 +87,12 @@ class TokenBudget:
     total: int
     used: int
 
+    def __post_init__(self) -> None:
+        if self.total < 0:
+            raise ValueError("total must be >= 0")
+        if self.used < 0:
+            raise ValueError("used must be >= 0")
+
     @property
     def remaining(self) -> int:
         """Tokens still available."""
@@ -88,6 +105,8 @@ class TokenBudget:
 
     def consume(self, tokens: int) -> TokenBudget:
         """Return a new TokenBudget with additional tokens consumed."""
+        if tokens < 0:
+            raise ValueError("tokens must be >= 0")
         return replace(self, used=self.used + tokens)
 
 

@@ -8,19 +8,11 @@ from __future__ import annotations
 
 import argparse
 import sys
-from dataclasses import replace
 
+from token_sieve.domain.counters import CharEstimateCounter
 from token_sieve.domain.model import ContentEnvelope, ContentType
 from token_sieve.domain.pipeline import CompressionPipeline
 from token_sieve.domain.ports import CompressionStrategy, TokenCounter
-
-
-class CharEstimateCounter:
-    """Zero-dependency token counter: ~chars/4 estimate (~75% accurate)."""
-
-    def count(self, text: str) -> int:
-        """Estimate token count as character count divided by 4."""
-        return max(1, len(text) // 4)
 
 
 class PassthroughStrategy:
@@ -51,12 +43,18 @@ def run(
     """Process text through the pipeline, return (output, stats).
 
     Stats dict contains: original_tokens, compressed_tokens, savings_ratio.
+    Uses pipeline events for token counts when available to avoid
+    double-counting.
     """
     envelope = ContentEnvelope(content=input_text, content_type=ContentType.TEXT)
-    original_tokens = counter.count(input_text)
-
     result_envelope, events = pipeline.process(envelope)
-    compressed_tokens = counter.count(result_envelope.content)
+
+    if events:
+        original_tokens = events[0].original_tokens
+        compressed_tokens = events[-1].compressed_tokens
+    else:
+        original_tokens = counter.count(input_text)
+        compressed_tokens = counter.count(result_envelope.content)
 
     savings_ratio = (
         0.0
