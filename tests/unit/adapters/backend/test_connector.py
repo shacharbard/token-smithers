@@ -174,3 +174,51 @@ class TestBackendConnectorProtocolCompliance:
         # Structural subtyping check: has call_tool with right signature
         assert hasattr(connector, "call_tool")
         assert callable(connector.call_tool)
+
+
+class TestBackendConnectorConcurrencyGuard:
+    """Concurrent calls must be serialized through an asyncio.Lock."""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_calls_are_serialized(self) -> None:
+        """Two concurrent call_tool invocations must not overlap on the session."""
+        import asyncio
+
+        call_order: list[str] = []
+
+        async def slow_call_tool(name: str, arguments: dict | None = None) -> MagicMock:
+            call_order.append(f"start:{name}")
+            await asyncio.sleep(0.05)
+            call_order.append(f"end:{name}")
+            result = MagicMock()
+            result.content = []
+            result.isError = False
+            return result
+
+        mock_session = MagicMock(spec=ClientSession)
+        mock_session.call_tool = AsyncMock(side_effect=slow_call_tool)
+        connector = BackendConnector(mock_session)
+
+        # Launch two calls concurrently
+        await asyncio.gather(
+            connector.call_tool("tool_a", {}),
+            connector.call_tool("tool_b", {}),
+        )
+
+        # If serialized: start:a, end:a, start:b, end:b (or b then a)
+        # If NOT serialized: start:a, start:b, end:a, end:b (interleaved)
+        # Check that no two starts appear before an end
+        assert call_order[0].startswith("start:")
+        assert call_order[1].startswith("end:"), (
+            f"Calls interleaved (no lock): {call_order}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_has_lock_attribute(self) -> None:
+        """BackendConnector must have an asyncio.Lock for serialization."""
+        import asyncio
+
+        mock_session = MagicMock(spec=ClientSession)
+        connector = BackendConnector(mock_session)
+        assert hasattr(connector, "_lock")
+        assert isinstance(connector._lock, asyncio.Lock)

@@ -7,6 +7,7 @@ crashing the proxy.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 from typing import Any
@@ -30,21 +31,23 @@ class BackendConnector:
     def __init__(self, session: ClientSession) -> None:
         self._session = session
         self._tools_cache: list[types.Tool] | None = None
+        self._lock = asyncio.Lock()
 
     async def list_tools(self) -> list[types.Tool]:
         """Return tools from backend, caching after first call.
 
         If the backend is unreachable, returns an empty list and logs the error.
         """
-        if self._tools_cache is not None:
-            return self._tools_cache
-        try:
-            result = await self._session.list_tools()
-            self._tools_cache = list(result.tools)
-            return self._tools_cache
-        except Exception:
-            logger.exception("Failed to list tools from backend")
-            return []
+        async with self._lock:
+            if self._tools_cache is not None:
+                return self._tools_cache
+            try:
+                result = await self._session.list_tools()
+                self._tools_cache = list(result.tools)
+                return self._tools_cache
+            except Exception:
+                logger.exception("Failed to list tools from backend")
+                return []
 
     async def call_tool(
         self, name: str, arguments: dict[str, Any]
@@ -55,18 +58,19 @@ class BackendConnector:
         On failure, returns an error CallToolResult with isError=True
         containing the exception message — the proxy never crashes.
         """
-        try:
-            return await self._session.call_tool(name, arguments)
-        except Exception as exc:
-            logger.exception(
-                "Backend call_tool(%s) failed: %s", name, exc
-            )
-            return types.CallToolResult(
-                content=[
-                    types.TextContent(
-                        type="text",
-                        text=f"Backend error: {exc}",
-                    ),
-                ],
-                isError=True,
-            )
+        async with self._lock:
+            try:
+                return await self._session.call_tool(name, arguments)
+            except Exception as exc:
+                logger.exception(
+                    "Backend call_tool(%s) failed: %s", name, exc
+                )
+                return types.CallToolResult(
+                    content=[
+                        types.TextContent(
+                            type="text",
+                            text=f"Backend error: {exc}",
+                        ),
+                    ],
+                    isError=True,
+                )
