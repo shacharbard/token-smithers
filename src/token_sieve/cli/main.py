@@ -107,7 +107,12 @@ def _run_pipe(args: argparse.Namespace) -> int:
 
 
 async def _run_proxy(config_path: str | None = None) -> int:
-    """Proxy mode: start MCP server."""
+    """Proxy mode: start MCP server with real backend connection.
+
+    Fails fast if no backend command is configured.
+    """
+    from token_sieve.adapters.backend.connector import BackendConnector
+    from token_sieve.adapters.backend.stdio_transport import StdioClientTransport
     from token_sieve.server.proxy import ProxyServer
 
     if config_path is not None:
@@ -120,8 +125,25 @@ async def _run_proxy(config_path: str | None = None) -> int:
 
         config = TokenSieveConfig()
 
+    if not config.backend.command:
+        print(
+            "Error: backend.command is required for proxy mode. "
+            "Configure a backend MCP server command in your config file.",
+            file=sys.stderr,
+        )
+        return 1
+
     proxy = ProxyServer.create_from_config(config)
-    await proxy.run()
+
+    # Wire real backend — replace the stub connector with a live session
+    transport = StdioClientTransport(
+        command=config.backend.command,
+        args=config.backend.args,
+        env=config.backend.env or None,
+    )
+    async with transport.connect() as session:
+        proxy._connector = BackendConnector(session)
+        await proxy.run()
     return 0
 
 

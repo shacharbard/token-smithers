@@ -205,3 +205,65 @@ class TestCliErrorHandling:
         with patch("token_sieve.cli.main._run_proxy", mock_run):
             exit_code = main([])
         assert exit_code == 130
+
+
+class TestProxyBackendWiring:
+    """Finding 1: _run_proxy must wire a real backend, not leave the stub."""
+
+    def test_run_proxy_fails_fast_without_backend_command(self, capsys):
+        """Proxy mode must fail fast if backend.command is not configured."""
+        from token_sieve.cli.main import main
+
+        exit_code = main([])
+        captured = capsys.readouterr()
+        assert exit_code == 1
+        assert "backend" in captured.err.lower()
+
+    def test_run_proxy_wires_real_backend(self, tmp_path):
+        """_run_proxy must replace _StubConnector with a real BackendConnector."""
+        import asyncio
+        import contextlib
+
+        from token_sieve.adapters.backend.connector import BackendConnector
+        from token_sieve.cli.main import _run_proxy
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "backend:\n"
+            "  transport: stdio\n"
+            "  command: echo\n"
+            "  args: [\"hello\"]\n"
+        )
+
+        captured_connector = {}
+
+        async def fake_run(self_proxy):
+            """Capture the connector type instead of actually running."""
+            captured_connector["type"] = type(self_proxy._connector).__name__
+
+        # Mock the transport.connect() to avoid real subprocess
+        mock_session = AsyncMock()
+
+        @contextlib.asynccontextmanager
+        async def fake_connect():
+            yield mock_session
+
+        mock_transport = AsyncMock()
+        mock_transport.connect = fake_connect
+
+        with (
+            patch(
+                "token_sieve.adapters.backend.stdio_transport.StdioClientTransport",
+                return_value=mock_transport,
+            ),
+            patch(
+                "token_sieve.server.proxy.ProxyServer.run",
+                fake_run,
+            ),
+        ):
+            exit_code = asyncio.run(_run_proxy(str(config_file)))
+
+        assert exit_code == 0
+        assert captured_connector.get("type") == "BackendConnector", (
+            f"Expected BackendConnector, got {captured_connector.get('type')}"
+        )
