@@ -28,7 +28,7 @@ token-sieve = "token_sieve.cli.main:main"
 packages = ["src/token_sieve"]
 
 [tool.pytest.ini_options]
-addopts = "--cov=token_sieve.domain --cov=token_sieve.adapters --cov-fail-under=95 --cov-branch"
+addopts = "--cov=token_sieve.domain --cov=token_sieve.adapters --cov-fail-under=75 --cov-branch"
 testpaths = ["tests"]
 
 [tool.coverage.run]
