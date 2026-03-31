@@ -204,3 +204,15 @@ class TestToolFilterFromConfig:
         f = ToolFilter.from_config(cfg)
         assert len(f.patterns) == 2
         assert all(isinstance(p, re.Pattern) for p in f.patterns)
+
+
+class TestToolFilterDefenseInDepth:
+    """Defense-in-depth: invalid mode raises ValueError even at runtime."""
+
+    def test_invalid_mode_raises_value_error(self) -> None:
+        """If someone bypasses Pydantic and passes invalid mode, is_allowed raises."""
+        # Force an invalid mode via object.__setattr__ to bypass frozen/Literal
+        f = ToolFilter(mode="passthrough")  # type: ignore[arg-type]
+        object.__setattr__(f, "mode", "bogus")
+        with pytest.raises(ValueError, match="Unknown filter mode"):
+            f.is_allowed("any_tool")

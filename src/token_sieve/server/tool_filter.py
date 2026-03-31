@@ -37,8 +37,9 @@ class ToolFilter:
 
         if self.mode == "allowlist":
             return match
-        # blocklist
-        return not match
+        if self.mode == "blocklist":
+            return not match
+        raise ValueError(f"Unknown filter mode: {self.mode!r}")
 
     def filter_tools(self, tools: list[Any]) -> list[Any]:
         """Filter a list of tool objects, keeping only allowed ones.
@@ -56,7 +57,7 @@ class ToolFilter:
         """
         compiled = [re.compile(p) for p in config.patterns]
         return cls(
-            mode=config.mode,  # type: ignore[arg-type]
+            mode=config.mode,
             names=frozenset(config.tools),
             patterns=compiled,
         )

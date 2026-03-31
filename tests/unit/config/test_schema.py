@@ -198,3 +198,20 @@ class TestTokenSieveConfig:
     def test_negative_dedup_window_raises(self) -> None:
         with pytest.raises(Exception):
             TokenSieveConfig(compression={"dedup_window": -1})
+
+
+class TestFilterConfigModeValidation:
+    """FilterConfig.mode must reject invalid mode strings at construction."""
+
+    def test_invalid_mode_rejected(self) -> None:
+        """Typos like 'allow-list' must raise ValidationError, not silently pass."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            FilterConfig(mode="allow-list")
+
+    def test_garbage_mode_rejected(self) -> None:
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            FilterConfig(mode="foobar")
