@@ -176,3 +176,125 @@ class TestTier1TokenReduction:
         result = v.virtualize([GITHUB_SEARCH_TOOL], tier=1)
         compressed_len = sum(len(json.dumps(t)) for t in result)
         assert compressed_len < original_len
+
+
+# --- Tier 2: Description Compression ---
+
+VERBOSE_TOOL: dict = {
+    "name": "analyze_code",
+    "description": (
+        "Analyze source code for potential issues, code smells, and opportunities "
+        "for improvement. This tool performs static analysis on the provided code "
+        "snippet and returns detailed findings. It supports multiple programming "
+        "languages including Python, JavaScript, TypeScript, Go, and Rust. "
+        "Example: analyze_code({code: 'def foo(): pass', language: 'python'}) "
+        "returns a list of findings. Each finding includes severity, line number, "
+        "and a description of the issue. The tool also provides suggestions for "
+        "fixing each issue found. e.g. missing type hints, unused imports, etc."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "code": {
+                "type": "string",
+                "description": (
+                    "The source code to analyze. Must be valid syntax for the "
+                    "specified language. Example: 'def hello(): print(\"world\")'. "
+                    "Can include multiple functions and classes."
+                ),
+            },
+            "language": {
+                "type": "string",
+                "description": "Programming language of the code.",
+                "enum": ["python", "javascript", "typescript", "go", "rust"],
+            },
+            "severity_threshold": {
+                "type": "string",
+                "description": (
+                    "Minimum severity level for reported findings. Options are "
+                    "'info', 'warning', 'error', 'critical'. e.g. set to 'warning' "
+                    "to filter out informational findings."
+                ),
+                "enum": ["info", "warning", "error", "critical"],
+            },
+        },
+        "required": ["code", "language"],
+    },
+}
+
+SHORT_TOOL: dict = {
+    "name": "get_time",
+    "description": "Get current UTC time.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "format": {
+                "type": "string",
+                "description": "Time format string.",
+            },
+        },
+    },
+}
+
+
+class TestTier2DescriptionCompression:
+    """Tier 2 compresses verbose descriptions while preserving semantics."""
+
+    def test_long_tool_description_shortened(self) -> None:
+        """Tool description over 100 tokens is compressed."""
+        original_word_count = len(VERBOSE_TOOL["description"].split())
+        result = SchemaVirtualizer().virtualize([VERBOSE_TOOL], tier=2)
+        desc = result[0]["description"]
+        compressed_word_count = len(desc.split())
+        # Should be meaningfully shorter than original (at least 20% reduction)
+        assert compressed_word_count < original_word_count * 0.8
+
+    def test_examples_stripped_from_description(self) -> None:
+        """Sentences containing 'Example:' or 'e.g.' are removed."""
+        result = SchemaVirtualizer().virtualize([VERBOSE_TOOL], tier=2)
+        desc = result[0]["description"]
+        assert "Example:" not in desc
+        assert "e.g." not in desc
+
+    def test_short_description_unchanged(self) -> None:
+        """Short descriptions (under threshold) are not modified."""
+        result = SchemaVirtualizer().virtualize([SHORT_TOOL], tier=2)
+        assert result[0]["description"] == "Get current UTC time."
+
+    def test_enum_values_preserved(self) -> None:
+        """Enum values in properties are never removed."""
+        result = SchemaVirtualizer().virtualize([VERBOSE_TOOL], tier=2)
+        lang_prop = result[0]["inputSchema"]["properties"]["language"]
+        assert lang_prop["enum"] == ["python", "javascript", "typescript", "go", "rust"]
+
+    def test_property_descriptions_compressed(self) -> None:
+        """Long property descriptions are also compressed."""
+        result = SchemaVirtualizer().virtualize([VERBOSE_TOOL], tier=2)
+        code_prop = result[0]["inputSchema"]["properties"]["code"]
+        desc = code_prop.get("description", "")
+        # Should be shorter than original and have examples stripped
+        assert "Example:" not in desc
+        assert len(desc.split()) < len(VERBOSE_TOOL["inputSchema"]["properties"]["code"]["description"].split())
+
+    def test_tier2_applies_tier1_first(self) -> None:
+        """Tier 2 includes Tier 1 cleanup."""
+        tool_with_boilerplate = {
+            "name": "test_tool",
+            "description": "A verbose test tool. " * 20,
+            "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        }
+        result = SchemaVirtualizer().virtualize([tool_with_boilerplate], tier=2)
+        assert "$schema" not in result[0]["inputSchema"]
+        assert "additionalProperties" not in result[0]["inputSchema"]
+
+    def test_types_preserved(self) -> None:
+        """Property types are preserved through Tier 2."""
+        result = SchemaVirtualizer().virtualize([VERBOSE_TOOL], tier=2)
+        props = result[0]["inputSchema"]["properties"]
+        assert props["code"]["type"] == "string"
+        assert props["language"]["type"] == "string"

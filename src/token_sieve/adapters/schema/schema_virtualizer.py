@@ -133,11 +133,89 @@ class SchemaVirtualizer:
         ):
             self._cleanup_property(items_def)
 
-    # --- Tier 2: Description compression (placeholder for Task 3) ---
+    # --- Tier 2: Description compression ---
+
+    # Patterns that indicate example text to strip
+    _EXAMPLE_PATTERNS: list[re.Pattern[str]] = [
+        re.compile(r"(?:^|\.\s+)[^.]*\bExample:\s*[^.]*\.?", re.IGNORECASE),
+        re.compile(r"(?:^|\.\s+)[^.]*\be\.g\.\s*[^.]*\.?", re.IGNORECASE),
+    ]
+
+    # Max words for a compressed description
+    _MAX_DESCRIPTION_WORDS: int = 50
 
     def _apply_tier2(self, tool: dict) -> dict:
-        """Compress descriptions. Implemented in Task 3."""
+        """Compress verbose descriptions and strip examples."""
+        # Compress tool-level description
+        if desc := tool.get("description", ""):
+            tool["description"] = self._compress_description(desc)
+
+        # Compress property-level descriptions
+        schema = tool.get("inputSchema", {})
+        self._compress_property_descriptions(schema)
+
         return tool
+
+    def _compress_description(self, text: str) -> str:
+        """Shorten a description: strip examples, truncate to first N sentences."""
+        if not text:
+            return text
+
+        # Strip example sentences
+        cleaned = self._strip_examples(text)
+
+        # If already short enough, return as-is
+        words = cleaned.split()
+        if len(words) <= self._MAX_DESCRIPTION_WORDS:
+            return cleaned.strip()
+
+        # Keep first 2 sentences or MAX_DESCRIPTION_WORDS words
+        sentences = re.split(r"(?<=[.!?])\s+", cleaned)
+        result_sentences: list[str] = []
+        word_count = 0
+        for sent in sentences:
+            sent_words = sent.split()
+            if word_count + len(sent_words) > self._MAX_DESCRIPTION_WORDS and result_sentences:
+                break
+            result_sentences.append(sent)
+            word_count += len(sent_words)
+            if len(result_sentences) >= 2:
+                break
+
+        return " ".join(result_sentences).strip()
+
+    def _strip_examples(self, text: str) -> str:
+        """Remove sentences containing Example: or e.g. patterns."""
+        # Split into sentences and filter
+        sentences = re.split(r"(?<=[.!?])\s+", text)
+        filtered: list[str] = []
+        for sent in sentences:
+            if re.search(r"\bExample:", sent, re.IGNORECASE):
+                continue
+            if re.search(r"\be\.g\.", sent, re.IGNORECASE):
+                continue
+            filtered.append(sent)
+        result = " ".join(filtered)
+        return result if result else text  # fallback to original if all stripped
+
+    def _compress_property_descriptions(self, schema: dict) -> None:
+        """Recursively compress descriptions within property definitions."""
+        props = schema.get("properties", {})
+        for prop_def in props.values():
+            if not isinstance(prop_def, dict):
+                continue
+            if desc := prop_def.get("description", ""):
+                compressed = self._compress_description(desc)
+                if compressed:
+                    prop_def["description"] = compressed
+                else:
+                    del prop_def["description"]
+            # Recurse into nested objects
+            if "properties" in prop_def:
+                self._compress_property_descriptions(prop_def)
+            items_def = prop_def.get("items")
+            if isinstance(items_def, dict) and "properties" in items_def:
+                self._compress_property_descriptions(items_def)
 
     # --- Tier 3: DietMCP notation (placeholder for Task 4) ---
 
