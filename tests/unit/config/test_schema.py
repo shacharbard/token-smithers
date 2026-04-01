@@ -10,9 +10,11 @@ import yaml
 from token_sieve.config.schema import (
     AdapterConfig,
     BackendConfig,
+    CacheConfig,
     CompressionConfig,
     FilterConfig,
     ObservabilityConfig,
+    RerankerConfig,
     TokenSieveConfig,
     load_config,
 )
@@ -296,3 +298,55 @@ class TestCompressionConfigAdapters:
         """Config without adapters key uses default adapter list."""
         cfg = CompressionConfig(enabled=True, strategy="passthrough")
         assert len(cfg.adapters) > 0  # defaults populated
+
+
+class TestRerankerConfig:
+    """RerankerConfig for statistical reranker settings."""
+
+    def test_defaults(self) -> None:
+        cfg = RerankerConfig()
+        assert cfg.enabled is True
+        assert cfg.max_tools == 500
+        assert cfg.recency_weight == 0.3
+
+    def test_custom_values(self) -> None:
+        cfg = RerankerConfig(enabled=False, max_tools=100, recency_weight=0.5)
+        assert cfg.enabled is False
+        assert cfg.max_tools == 100
+        assert cfg.recency_weight == 0.5
+
+
+class TestCacheConfig:
+    """CacheConfig for schema cache and call cache settings."""
+
+    def test_defaults(self) -> None:
+        cfg = CacheConfig()
+        assert cfg.schema_cache_ttl == 3600.0
+        assert cfg.call_cache_max == 200
+        assert cfg.diff_store_max == 100
+
+    def test_custom_values(self) -> None:
+        cfg = CacheConfig(schema_cache_ttl=60.0, call_cache_max=50, diff_store_max=25)
+        assert cfg.schema_cache_ttl == 60.0
+        assert cfg.call_cache_max == 50
+        assert cfg.diff_store_max == 25
+
+
+class TestTokenSieveConfigExtended:
+    """TokenSieveConfig with reranker and cache sections."""
+
+    def test_reranker_defaults_in_config(self) -> None:
+        cfg = TokenSieveConfig()
+        assert isinstance(cfg.reranker, RerankerConfig)
+        assert cfg.reranker.enabled is True
+
+    def test_cache_defaults_in_config(self) -> None:
+        cfg = TokenSieveConfig()
+        assert isinstance(cfg.cache, CacheConfig)
+        assert cfg.cache.schema_cache_ttl == 3600.0
+
+    def test_backward_compatible_without_new_sections(self) -> None:
+        """Old configs without reranker/cache sections still work."""
+        cfg = TokenSieveConfig(backend={"transport": "stdio"})
+        assert isinstance(cfg.reranker, RerankerConfig)
+        assert isinstance(cfg.cache, CacheConfig)

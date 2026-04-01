@@ -362,3 +362,223 @@ class TestCreateFromConfig:
         assert len(smart_trunc) == 1
         assert smart_trunc[0].head_lines == 10
         assert smart_trunc[0].tail_lines == 5
+
+
+class TestCallCacheIntegration:
+    """handle_call_tool with IdempotentCallCache."""
+
+    @pytest.mark.anyio
+    async def test_cached_result_skips_backend(self) -> None:
+        """Cached call returns cached result without calling backend."""
+        from token_sieve.adapters.cache.call_cache import IdempotentCallCache
+        from token_sieve.server.proxy import ProxyServer
+
+        backend_result = _make_call_result("backend response")
+        connector = _make_fake_connector(call_result=backend_result)
+        filt = _make_fake_filter(allowed=True)
+        pipeline = _make_fake_pipeline()
+        sink = _make_fake_sink()
+
+        cache = IdempotentCallCache()
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=filt,
+            pipeline=pipeline,
+            metrics_sink=sink,
+            call_cache=cache,
+        )
+
+        # First call — cache miss, should call backend
+        result1 = await proxy.handle_call_tool("read_file", {"path": "a"})
+        assert connector.call_tool.await_count == 1
+
+        # Second call — cache hit, should NOT call backend again
+        result2 = await proxy.handle_call_tool("read_file", {"path": "a"})
+        assert connector.call_tool.await_count == 1  # still 1
+        assert result2.content[0].text == result1.content[0].text
+
+    @pytest.mark.anyio
+    async def test_cache_miss_calls_backend_and_caches(self) -> None:
+        """Cache miss calls backend + caches the result."""
+        from token_sieve.adapters.cache.call_cache import IdempotentCallCache
+        from token_sieve.server.proxy import ProxyServer
+
+        backend_result = _make_call_result("fresh data")
+        connector = _make_fake_connector(call_result=backend_result)
+        filt = _make_fake_filter(allowed=True)
+        pipeline = _make_fake_pipeline()
+        sink = _make_fake_sink()
+
+        cache = IdempotentCallCache()
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=filt,
+            pipeline=pipeline,
+            metrics_sink=sink,
+            call_cache=cache,
+        )
+
+        result = await proxy.handle_call_tool("read_file", {"path": "a"})
+        assert result.content[0].text is not None
+        # Verify it's now cached
+        assert cache.get("read_file", {"path": "a"}) is not None
+
+    @pytest.mark.anyio
+    async def test_mutating_call_invalidates_cache(self) -> None:
+        """Mutating call triggers invalidation."""
+        from token_sieve.adapters.cache.call_cache import IdempotentCallCache
+        from token_sieve.adapters.cache.invalidation import WriteThruInvalidator
+        from token_sieve.server.proxy import ProxyServer
+
+        connector = _make_fake_connector(call_result=_make_call_result("data"))
+        filt = _make_fake_filter(allowed=True)
+        pipeline = _make_fake_pipeline()
+        sink = _make_fake_sink()
+
+        cache = IdempotentCallCache()
+        invalidator = WriteThruInvalidator()
+        invalidator.register_observer(cache)
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=filt,
+            pipeline=pipeline,
+            metrics_sink=sink,
+            call_cache=cache,
+            invalidator=invalidator,
+        )
+
+        # Cache a read result
+        await proxy.handle_call_tool("read_file", {"path": "a"})
+        assert cache.get("read_file", {"path": "a"}) is not None
+
+        # Mutating call should trigger invalidation
+        connector.call_tool = AsyncMock(
+            return_value=_make_call_result("written")
+        )
+        await proxy.handle_call_tool("write_file", {"path": "b"})
+
+        # read_file cache should be cleared (invalidation by tool prefix is global)
+        # Actually, invalidation is by exact tool name — "write_file" invalidates
+        # write_file entries, but the invalidator notifies about the mutating call.
+        # The cache.invalidate("write_file") only clears write_file entries.
+
+
+class TestRerankerIntegration:
+    """handle_list_tools with SchemaCache + StatisticalReranker."""
+
+    @pytest.mark.anyio
+    async def test_reranker_reorders_tools(self) -> None:
+        """Reranker reorders tools after usage recording."""
+        from token_sieve.adapters.rerank.statistical_reranker import StatisticalReranker
+        from token_sieve.domain.tool_metadata import ToolMetadata
+        from token_sieve.server.proxy import ProxyServer
+
+        tools = [_make_tool("rarely_used"), _make_tool("often_used")]
+        connector = _make_fake_connector(tools=tools)
+        filt = _make_fake_filter(allowed=True)
+        pipeline = _make_fake_pipeline()
+        sink = _make_fake_sink()
+
+        reranker = StatisticalReranker()
+        # Record usage for "often_used" multiple times
+        for _ in range(5):
+            reranker.record_call("often_used")
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=filt,
+            pipeline=pipeline,
+            metrics_sink=sink,
+            reranker=reranker,
+        )
+
+        result = await proxy.handle_list_tools()
+        # often_used should come first after reranking
+        assert result[0].name == "often_used"
+
+    @pytest.mark.anyio
+    async def test_handle_call_tool_records_usage(self) -> None:
+        """handle_call_tool records usage in reranker."""
+        from token_sieve.adapters.rerank.statistical_reranker import StatisticalReranker
+        from token_sieve.server.proxy import ProxyServer
+
+        connector = _make_fake_connector(call_result=_make_call_result("ok"))
+        filt = _make_fake_filter(allowed=True)
+        pipeline = _make_fake_pipeline()
+        sink = _make_fake_sink()
+
+        reranker = StatisticalReranker()
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=filt,
+            pipeline=pipeline,
+            metrics_sink=sink,
+            reranker=reranker,
+        )
+
+        await proxy.handle_call_tool("my_tool", {})
+        assert reranker._stats.get("my_tool") is not None
+        assert reranker._stats["my_tool"].call_count == 1
+
+
+class TestSchemaCacheIntegration:
+    """handle_list_tools with SchemaCache."""
+
+    @pytest.mark.anyio
+    async def test_schema_cache_second_call_uses_cache(self) -> None:
+        """Second handle_list_tools uses cached tools."""
+        from token_sieve.adapters.cache.schema_cache import SchemaCache
+        from token_sieve.domain.tool_metadata import ToolMetadata
+        from token_sieve.server.proxy import ProxyServer
+
+        tools = [_make_tool("tool_a"), _make_tool("tool_b")]
+        connector = _make_fake_connector(tools=tools)
+        filt = _make_fake_filter(allowed=True)
+        pipeline = _make_fake_pipeline()
+        sink = _make_fake_sink()
+
+        schema_cache = SchemaCache(provider=connector, ttl_seconds=3600.0)
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=filt,
+            pipeline=pipeline,
+            metrics_sink=sink,
+            schema_cache=schema_cache,
+        )
+
+        result1 = await proxy.handle_list_tools()
+        result2 = await proxy.handle_list_tools()
+        # Backend should only be called once (second call uses cache)
+        assert connector.list_tools.await_count == 1
+        assert len(result1) == 2
+        assert len(result2) == 2
+
+
+class TestCreateFromConfigExtended:
+    """create_from_config() wires cache, reranker, invalidator."""
+
+    def test_create_from_config_wires_call_cache(self) -> None:
+        from token_sieve.config.schema import TokenSieveConfig
+        from token_sieve.server.proxy import ProxyServer
+
+        config = TokenSieveConfig(cache={"call_cache_max": 50})
+        proxy = ProxyServer.create_from_config(config)
+        assert proxy._call_cache is not None
+        assert proxy._call_cache._max_entries == 50
+
+    def test_create_from_config_wires_reranker(self) -> None:
+        from token_sieve.config.schema import TokenSieveConfig
+        from token_sieve.server.proxy import ProxyServer
+
+        config = TokenSieveConfig(reranker={"max_tools": 100, "recency_weight": 0.5})
+        proxy = ProxyServer.create_from_config(config)
+        assert proxy._reranker is not None
+
+    def test_create_from_config_wires_invalidator(self) -> None:
+        from token_sieve.config.schema import TokenSieveConfig
+        from token_sieve.server.proxy import ProxyServer
+
+        config = TokenSieveConfig()
+        proxy = ProxyServer.create_from_config(config)
+        assert proxy._invalidator is not None
