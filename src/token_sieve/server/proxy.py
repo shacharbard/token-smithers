@@ -542,7 +542,45 @@ class ProxyServer:
             ttl_seconds=config.cache.schema_cache_ttl,
         )
 
-        return cls(
+        # Phase 04: Schema virtualization
+        schema_virtualizer = None
+        if config.schema_virtualization.enabled:
+            from token_sieve.adapters.schema.schema_virtualizer import SchemaVirtualizer
+
+            schema_virtualizer = SchemaVirtualizer(
+                frequent_threshold=config.schema_virtualization.frequent_call_threshold,
+            )
+
+        # Phase 04: Learning store (SQLite persistence)
+        learning_store = None
+        if config.learning.enabled:
+            from token_sieve.adapters.learning.sqlite_store import SQLiteLearningStore
+
+            # Store will be initialized lazily at first use (async connect)
+            # For now, store config for async init in _run_proxy
+            learning_store = _DeferredLearningStore(
+                db_path=config.learning.db_path,
+            )
+
+        # Phase 04: Semantic cache
+        semantic_cache = None
+        if config.semantic_cache.enabled:
+            from token_sieve.adapters.cache.semantic_cache import SQLiteSemanticCache
+
+            semantic_cache = _DeferredSemanticCache(
+                max_entries=config.semantic_cache.max_entries,
+                ttl_seconds=config.semantic_cache.ttl_seconds or 86400,
+                similarity_threshold=config.semantic_cache.similarity_threshold,
+            )
+
+        # Phase 04: Dashboard / metrics collector
+        from token_sieve.domain.metrics import InMemoryMetricsCollector
+
+        metrics_collector = None
+        if config.dashboard.enabled:
+            metrics_collector = InMemoryMetricsCollector()
+
+        proxy = cls(
             backend_connector=stub_connector,
             tool_filter=tool_filter,
             pipeline=pipeline,
@@ -551,7 +589,17 @@ class ProxyServer:
             invalidator=invalidator,
             reranker=reranker,
             schema_cache=schema_cache,
+            schema_virtualizer=schema_virtualizer,
+            learning_store=learning_store,
+            semantic_cache=semantic_cache,
+            metrics_collector=metrics_collector,
         )
+
+        # Self-tuning interval (calls between threshold adjustments)
+        proxy._self_tune_interval = 50
+        proxy._self_tune_call_count = 0
+
+        return proxy
 
 
 class _StubConnector:
@@ -572,3 +620,110 @@ class _StubConnector:
             ],
             isError=True,
         )
+
+
+class _DeferredLearningStore:
+    """Deferred learning store — wraps config for lazy async init.
+
+    Since create_from_config is sync but SQLiteLearningStore.connect()
+    is async, this wrapper defers actual DB connection until first use.
+    """
+
+    def __init__(self, db_path: str) -> None:
+        self._db_path = db_path
+        self._store: Any = None
+
+    async def _ensure_connected(self) -> Any:
+        if self._store is None:
+            import os
+
+            from token_sieve.adapters.learning.sqlite_store import SQLiteLearningStore
+
+            expanded = os.path.expanduser(self._db_path)
+            os.makedirs(os.path.dirname(expanded), exist_ok=True) if os.path.dirname(expanded) else None
+            self._store = await SQLiteLearningStore.connect(expanded)
+        return self._store
+
+    async def record_call(self, tool_name: str, server_id: str) -> None:
+        store = await self._ensure_connected()
+        await store.record_call(tool_name, server_id)
+
+    async def record_compression_event(
+        self, session_id: str, event: Any, tool_name: str
+    ) -> None:
+        store = await self._ensure_connected()
+        await store.record_compression_event(session_id, event, tool_name)
+
+    async def get_usage_stats(self, server_id: str) -> list:
+        store = await self._ensure_connected()
+        return await store.get_usage_stats(server_id)
+
+    async def record_cooccurrence(self, tool_a: str, tool_b: str) -> None:
+        store = await self._ensure_connected()
+        await store.record_cooccurrence(tool_a, tool_b)
+
+    async def get_cooccurrence(self, tool_name: str) -> list:
+        store = await self._ensure_connected()
+        return await store.get_cooccurrence(tool_name)
+
+    async def cache_result(
+        self, tool_name: str, args_normalized: str, result: str
+    ) -> None:
+        store = await self._ensure_connected()
+        await store.cache_result(tool_name, args_normalized, result)
+
+    async def lookup_similar(
+        self, tool_name: str, args_normalized: str, threshold: float
+    ) -> str | None:
+        store = await self._ensure_connected()
+        return await store.lookup_similar(tool_name, args_normalized, threshold)
+
+
+class _DeferredSemanticCache:
+    """Deferred semantic cache — wraps config for lazy async init."""
+
+    def __init__(
+        self,
+        max_entries: int = 1000,
+        ttl_seconds: int = 86400,
+        similarity_threshold: float = 0.85,
+    ) -> None:
+        self._max_entries = max_entries
+        self._ttl_seconds = ttl_seconds
+        self._similarity_threshold = similarity_threshold
+        self._cache: Any = None
+
+    async def _ensure_initialized(self) -> Any:
+        if self._cache is None:
+            from token_sieve.adapters.cache.semantic_cache import SQLiteSemanticCache
+
+            self._cache = SQLiteSemanticCache(
+                db_path=":memory:",
+                max_entries=self._max_entries,
+                ttl_seconds=self._ttl_seconds,
+            )
+            await self._cache.initialize()
+        return self._cache
+
+    async def lookup_similar(
+        self,
+        tool_name: str,
+        args_normalized: str,
+        threshold: float,
+    ) -> Any:
+        cache = await self._ensure_initialized()
+        return await cache.lookup_similar(tool_name, args_normalized, threshold)
+
+    async def cache_result(
+        self,
+        tool_name: str,
+        args_normalized: str,
+        args_hash: str,
+        result: str,
+    ) -> None:
+        cache = await self._ensure_initialized()
+        await cache.cache_result(tool_name, args_normalized, args_hash, result)
+
+    async def evict_expired(self) -> int:
+        cache = await self._ensure_initialized()
+        return await cache.evict_expired()
