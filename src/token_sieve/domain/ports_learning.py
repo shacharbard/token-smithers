@@ -1,0 +1,62 @@
+"""LearningStore port interface (Protocol class).
+
+Defines the contract for cross-session persistence of tool usage,
+result caching, compression metrics, and co-occurrence patterns.
+Zero external dependencies -- stdlib-only imports.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from token_sieve.domain.learning_types import CooccurrenceRecord, ToolUsageRecord
+    from token_sieve.domain.model import CompressionEvent
+
+
+@runtime_checkable
+class LearningStore(Protocol):
+    """Interface for cross-session learning persistence.
+
+    Implementations record tool usage, cache results, track compression
+    metrics, and store co-occurrence patterns. All methods are async to
+    support non-blocking I/O (e.g., SQLite via aiosqlite).
+    """
+
+    async def record_call(self, tool_name: str, server_id: str) -> None:
+        """Record a tool call for usage statistics."""
+        ...
+
+    async def get_usage_stats(self, server_id: str) -> list[ToolUsageRecord]:
+        """Get usage statistics for all tools on a server."""
+        ...
+
+    async def cache_result(
+        self, tool_name: str, args_normalized: str, result: str
+    ) -> None:
+        """Cache a tool result for later similarity lookup."""
+        ...
+
+    async def lookup_similar(
+        self, tool_name: str, args_normalized: str, threshold: float
+    ) -> str | None:
+        """Look up a cached result by tool name and normalized args.
+
+        Returns the cached result text if a match is found above the
+        similarity threshold, or None otherwise.
+        """
+        ...
+
+    async def record_compression_event(
+        self, session_id: str, event: CompressionEvent, tool_name: str
+    ) -> None:
+        """Record a compression event for auto-tuning analytics."""
+        ...
+
+    async def record_cooccurrence(self, tool_a: str, tool_b: str) -> None:
+        """Record that two tools were called together in a session."""
+        ...
+
+    async def get_cooccurrence(self, tool_name: str) -> list[CooccurrenceRecord]:
+        """Get co-occurrence records for a tool."""
+        ...

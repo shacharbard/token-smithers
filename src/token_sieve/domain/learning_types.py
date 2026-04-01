@@ -1,0 +1,29 @@
+"""Domain types for cross-session learning persistence.
+
+Frozen dataclasses with hashable-scalar fields only (str, int, float, bool, None).
+Zero external dependencies -- stdlib-only imports.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class ToolUsageRecord:
+    """A tool's usage statistics from the learning store."""
+
+    tool_name: str
+    server_id: str
+    call_count: int
+    last_called_at: str  # ISO 8601
+
+
+@dataclass(frozen=True)
+class CooccurrenceRecord:
+    """Records how often two tools are called together in a session."""
+
+    tool_a: str
+    tool_b: str
+    co_count: int
+    last_seen: str  # ISO 8601
