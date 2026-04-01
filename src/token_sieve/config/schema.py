@@ -139,6 +139,72 @@ class AttentionConfig(BaseModel):
     max_tools: int = 500
 
 
+class LearningConfig(BaseModel):
+    """Cross-session learning persistence settings.
+
+    Controls SQLite-backed storage for tool usage, result caching,
+    compression metrics, and co-occurrence patterns.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    enabled: bool = True
+    db_path: str = "~/.token-sieve/learning.db"
+
+
+class DashboardConfig(BaseModel):
+    """Token intelligence dashboard settings.
+
+    Controls metrics file output for the dashboard CLI.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    enabled: bool = True
+    metrics_file_path: str = "~/.token-sieve/metrics.json"
+
+
+class SchemaVirtualizationConfig(BaseModel):
+    """Schema virtualization (DietMCP-style) settings.
+
+    Tier 1: full schemas (default MCP). Tier 2: brief descriptions.
+    Tier 3: one-line notation (tool(param, ?opt) desc).
+    """
+
+    model_config = {"extra": "forbid"}
+
+    enabled: bool = False
+    tier: Literal[1, 2, 3] = 2
+    frequent_call_threshold: int = 3
+
+
+class SystemPromptConfig(BaseModel):
+    """System prompt optimization settings.
+
+    Controls interception and compression of backend server instructions.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    enabled: bool = True
+    compress_instructions: bool = True
+
+
+class SemanticCacheConfig(BaseModel):
+    """Semantic result caching settings.
+
+    Extends exact-match call cache with similarity-based lookup.
+    Requires learning.enabled=True for SQLite storage.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    enabled: bool = False
+    similarity_threshold: float = 0.85
+    max_entries: int = 1000
+    ttl_seconds: int | None = None
+
+
 class TokenSieveConfig(BaseModel):
     """Top-level token-sieve configuration.
 
@@ -155,6 +221,13 @@ class TokenSieveConfig(BaseModel):
     reranker: RerankerConfig = Field(default_factory=RerankerConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
     attention: AttentionConfig = Field(default_factory=AttentionConfig)
+    learning: LearningConfig = Field(default_factory=LearningConfig)
+    dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
+    schema_virtualization: SchemaVirtualizationConfig = Field(
+        default_factory=SchemaVirtualizationConfig
+    )
+    system_prompt: SystemPromptConfig = Field(default_factory=SystemPromptConfig)
+    semantic_cache: SemanticCacheConfig = Field(default_factory=SemanticCacheConfig)
 
 
 def load_config(path: Path) -> TokenSieveConfig:

@@ -386,3 +386,215 @@ class TestAttentionConfig:
         cfg = load_config(config_file)
         assert cfg.attention.enabled is True
         assert cfg.attention.max_tools == 200
+
+
+class TestLearningConfig:
+    """LearningConfig for cross-session persistence settings."""
+
+    def test_defaults(self) -> None:
+        from token_sieve.config.schema import LearningConfig
+
+        cfg = LearningConfig()
+        assert cfg.enabled is True
+        assert cfg.db_path == "~/.token-sieve/learning.db"
+
+    def test_custom_values(self) -> None:
+        from token_sieve.config.schema import LearningConfig
+
+        cfg = LearningConfig(enabled=False, db_path="/tmp/test.db")
+        assert cfg.enabled is False
+        assert cfg.db_path == "/tmp/test.db"
+
+    def test_extra_fields_forbidden(self) -> None:
+        from pydantic import ValidationError
+
+        from token_sieve.config.schema import LearningConfig
+
+        with pytest.raises(ValidationError):
+            LearningConfig(unknown_field="bad")
+
+    def test_learning_defaults_in_config(self) -> None:
+        cfg = TokenSieveConfig()
+        from token_sieve.config.schema import LearningConfig
+
+        assert isinstance(cfg.learning, LearningConfig)
+        assert cfg.learning.enabled is True
+
+
+class TestDashboardConfig:
+    """DashboardConfig for metrics dashboard settings."""
+
+    def test_defaults(self) -> None:
+        from token_sieve.config.schema import DashboardConfig
+
+        cfg = DashboardConfig()
+        assert cfg.enabled is True
+        assert cfg.metrics_file_path == "~/.token-sieve/metrics.json"
+
+    def test_custom_values(self) -> None:
+        from token_sieve.config.schema import DashboardConfig
+
+        cfg = DashboardConfig(enabled=False, metrics_file_path="/tmp/metrics.json")
+        assert cfg.enabled is False
+        assert cfg.metrics_file_path == "/tmp/metrics.json"
+
+    def test_extra_fields_forbidden(self) -> None:
+        from pydantic import ValidationError
+
+        from token_sieve.config.schema import DashboardConfig
+
+        with pytest.raises(ValidationError):
+            DashboardConfig(unknown_field="bad")
+
+    def test_dashboard_defaults_in_config(self) -> None:
+        cfg = TokenSieveConfig()
+        from token_sieve.config.schema import DashboardConfig
+
+        assert isinstance(cfg.dashboard, DashboardConfig)
+        assert cfg.dashboard.enabled is True
+
+
+class TestSchemaVirtualizationConfig:
+    """SchemaVirtualizationConfig for DietMCP-style elision."""
+
+    def test_defaults(self) -> None:
+        from token_sieve.config.schema import SchemaVirtualizationConfig
+
+        cfg = SchemaVirtualizationConfig()
+        assert cfg.enabled is False
+        assert cfg.tier == 2
+        assert cfg.frequent_call_threshold == 3
+
+    def test_custom_values(self) -> None:
+        from token_sieve.config.schema import SchemaVirtualizationConfig
+
+        cfg = SchemaVirtualizationConfig(enabled=True, tier=3, frequent_call_threshold=5)
+        assert cfg.enabled is True
+        assert cfg.tier == 3
+        assert cfg.frequent_call_threshold == 5
+
+    def test_tier_literal_values(self) -> None:
+        """Tier must be 1, 2, or 3."""
+        from pydantic import ValidationError
+
+        from token_sieve.config.schema import SchemaVirtualizationConfig
+
+        with pytest.raises(ValidationError):
+            SchemaVirtualizationConfig(tier=4)
+
+    def test_extra_fields_forbidden(self) -> None:
+        from pydantic import ValidationError
+
+        from token_sieve.config.schema import SchemaVirtualizationConfig
+
+        with pytest.raises(ValidationError):
+            SchemaVirtualizationConfig(unknown_field="bad")
+
+    def test_schema_virt_defaults_in_config(self) -> None:
+        cfg = TokenSieveConfig()
+        from token_sieve.config.schema import SchemaVirtualizationConfig
+
+        assert isinstance(cfg.schema_virtualization, SchemaVirtualizationConfig)
+        assert cfg.schema_virtualization.enabled is False
+
+
+class TestSystemPromptConfig:
+    """SystemPromptConfig for system prompt optimization."""
+
+    def test_defaults(self) -> None:
+        from token_sieve.config.schema import SystemPromptConfig
+
+        cfg = SystemPromptConfig()
+        assert cfg.enabled is True
+        assert cfg.compress_instructions is True
+
+    def test_custom_values(self) -> None:
+        from token_sieve.config.schema import SystemPromptConfig
+
+        cfg = SystemPromptConfig(enabled=False, compress_instructions=False)
+        assert cfg.enabled is False
+        assert cfg.compress_instructions is False
+
+    def test_extra_fields_forbidden(self) -> None:
+        from pydantic import ValidationError
+
+        from token_sieve.config.schema import SystemPromptConfig
+
+        with pytest.raises(ValidationError):
+            SystemPromptConfig(unknown_field="bad")
+
+    def test_system_prompt_defaults_in_config(self) -> None:
+        cfg = TokenSieveConfig()
+        from token_sieve.config.schema import SystemPromptConfig
+
+        assert isinstance(cfg.system_prompt, SystemPromptConfig)
+        assert cfg.system_prompt.enabled is True
+
+
+class TestSemanticCacheConfig:
+    """SemanticCacheConfig for semantic result caching."""
+
+    def test_defaults(self) -> None:
+        from token_sieve.config.schema import SemanticCacheConfig
+
+        cfg = SemanticCacheConfig()
+        assert cfg.enabled is False
+        assert cfg.similarity_threshold == 0.85
+        assert cfg.max_entries == 1000
+        assert cfg.ttl_seconds is None
+
+    def test_custom_values(self) -> None:
+        from token_sieve.config.schema import SemanticCacheConfig
+
+        cfg = SemanticCacheConfig(
+            enabled=True, similarity_threshold=0.9, max_entries=500, ttl_seconds=3600
+        )
+        assert cfg.enabled is True
+        assert cfg.similarity_threshold == 0.9
+        assert cfg.max_entries == 500
+        assert cfg.ttl_seconds == 3600
+
+    def test_extra_fields_forbidden(self) -> None:
+        from pydantic import ValidationError
+
+        from token_sieve.config.schema import SemanticCacheConfig
+
+        with pytest.raises(ValidationError):
+            SemanticCacheConfig(unknown_field="bad")
+
+    def test_semantic_cache_defaults_in_config(self) -> None:
+        cfg = TokenSieveConfig()
+        from token_sieve.config.schema import SemanticCacheConfig
+
+        assert isinstance(cfg.semantic_cache, SemanticCacheConfig)
+        assert cfg.semantic_cache.enabled is False
+
+
+class TestPhase04ConfigYamlRoundTrip:
+    """Phase 04 config sections survive YAML round-trip."""
+
+    def test_yaml_round_trip_preserves_new_fields(self, tmp_path: Path) -> None:
+        yaml_content = {
+            "learning": {"enabled": True, "db_path": "/custom/path.db"},
+            "dashboard": {"enabled": False, "metrics_file_path": "/tmp/m.json"},
+            "schema_virtualization": {"enabled": True, "tier": 3, "frequent_call_threshold": 5},
+            "system_prompt": {"enabled": False, "compress_instructions": False},
+            "semantic_cache": {"enabled": True, "similarity_threshold": 0.9, "max_entries": 500, "ttl_seconds": 7200},
+        }
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(yaml.dump(yaml_content))
+        cfg = load_config(config_file)
+        assert cfg.learning.db_path == "/custom/path.db"
+        assert cfg.dashboard.enabled is False
+        assert cfg.schema_virtualization.tier == 3
+        assert cfg.system_prompt.compress_instructions is False
+        assert cfg.semantic_cache.ttl_seconds == 7200
+
+    def test_backward_compatible_without_phase04_sections(self) -> None:
+        """Old configs without Phase 04 sections still work."""
+        cfg = TokenSieveConfig(backend={"transport": "stdio"})
+        assert cfg.learning.enabled is True
+        assert cfg.dashboard.enabled is True
+        assert cfg.schema_virtualization.enabled is False
+        assert cfg.system_prompt.enabled is True
+        assert cfg.semantic_cache.enabled is False
