@@ -154,3 +154,69 @@ class TestValidatorMatchesRegistry:
                 f"Validator name '{name}' not in _ADAPTER_REGISTRY. "
                 f"Did you mean one of: {list(registry.keys())}?"
             )
+
+
+class TestValidateConfigCrossSection:
+    """Phase 04 cross-section config validation."""
+
+    def test_semantic_cache_requires_learning_enabled(self) -> None:
+        """semantic_cache.enabled=True requires learning.enabled=True."""
+        from token_sieve.config.schema import TokenSieveConfig
+        from token_sieve.config.validator import validate_config
+
+        cfg = TokenSieveConfig(
+            semantic_cache={"enabled": True},
+            learning={"enabled": False},
+        )
+        errors = validate_config(cfg)
+        assert any("semantic_cache" in e and "learning" in e for e in errors)
+
+    def test_semantic_cache_with_learning_ok(self) -> None:
+        """semantic_cache.enabled=True + learning.enabled=True is valid."""
+        from token_sieve.config.schema import TokenSieveConfig
+        from token_sieve.config.validator import validate_config
+
+        cfg = TokenSieveConfig(
+            semantic_cache={"enabled": True},
+            learning={"enabled": True},
+        )
+        errors = validate_config(cfg)
+        assert not any("semantic_cache" in e for e in errors)
+
+    def test_semantic_cache_disabled_with_learning_disabled_ok(self) -> None:
+        """Both disabled is valid."""
+        from token_sieve.config.schema import TokenSieveConfig
+        from token_sieve.config.validator import validate_config
+
+        cfg = TokenSieveConfig(
+            semantic_cache={"enabled": False},
+            learning={"enabled": False},
+        )
+        errors = validate_config(cfg)
+        assert not any("semantic_cache" in e for e in errors)
+
+    def test_schema_virtualization_tier_valid(self) -> None:
+        """Tiers 1, 2, 3 are accepted."""
+        from token_sieve.config.schema import SchemaVirtualizationConfig
+
+        for tier in (1, 2, 3):
+            cfg = SchemaVirtualizationConfig(tier=tier)
+            assert cfg.tier == tier
+
+    def test_schema_virtualization_tier_invalid(self) -> None:
+        """Tiers outside 1-3 are rejected by Pydantic Literal."""
+        from pydantic import ValidationError
+
+        from token_sieve.config.schema import SchemaVirtualizationConfig
+
+        with pytest.raises(ValidationError):
+            SchemaVirtualizationConfig(tier=0)
+
+    def test_default_config_has_no_errors(self) -> None:
+        """Default config should pass all validation."""
+        from token_sieve.config.schema import TokenSieveConfig
+        from token_sieve.config.validator import validate_config
+
+        cfg = TokenSieveConfig()
+        errors = validate_config(cfg)
+        assert errors == []

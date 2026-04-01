@@ -217,11 +217,73 @@ class SchemaVirtualizer:
             if isinstance(items_def, dict) and "properties" in items_def:
                 self._compress_property_descriptions(items_def)
 
-    # --- Tier 3: DietMCP notation (placeholder for Task 4) ---
+    # --- Tier 3: DietMCP notation ---
+
+    _MAX_DIETMCP_PARAMS: int = 4
+    _MAX_DESC_CHARS: int = 60
 
     def _apply_tier3(self, tool: dict) -> dict:
-        """Convert simple tools to DietMCP notation. Implemented in Task 4."""
+        """Convert simple tools to DietMCP one-liner notation.
+
+        Simple tools (<=4 params, no nested objects) become:
+            tool_name(required, ?optional) short description
+
+        Complex tools stay at Tier 2 level.
+        """
+        schema = tool.get("inputSchema", {})
+        props = schema.get("properties", {})
+
+        # Guard: too many params or has nested objects -> stay Tier 2
+        if len(props) > self._MAX_DIETMCP_PARAMS:
+            return tool
+        if self._has_nested_objects(props):
+            return tool
+
+        # Build parameter list
+        required = set(schema.get("required", []))
+        params: list[str] = []
+        # Required params first, then optional
+        for name in props:
+            if name in required:
+                params.append(name)
+        for name in props:
+            if name not in required:
+                params.append(f"?{name}")
+
+        param_str = ", ".join(params)
+
+        # Short description (first sentence, truncated)
+        desc = tool.get("description", "")
+        short_desc = self._truncate_description(desc, self._MAX_DESC_CHARS)
+
+        # Build DietMCP notation
+        tool_name = tool.get("name", "")
+        tool["description"] = f"{tool_name}({param_str}) {short_desc}"
+        tool["inputSchema"] = {"type": "object"}
+
         return tool
+
+    def _has_nested_objects(self, props: dict) -> bool:
+        """Check if any property is a nested object (type=object with properties)."""
+        for prop_def in props.values():
+            if not isinstance(prop_def, dict):
+                continue
+            if prop_def.get("type") == "object" and "properties" in prop_def:
+                return True
+        return False
+
+    def _truncate_description(self, text: str, max_chars: int) -> str:
+        """Truncate to first sentence or max_chars."""
+        # First sentence
+        match = re.match(r"^[^.!?]+[.!?]", text)
+        first_sentence = match.group(0) if match else text
+
+        if len(first_sentence) <= max_chars:
+            return first_sentence
+
+        # Truncate at word boundary
+        truncated = first_sentence[:max_chars].rsplit(" ", 1)[0]
+        return truncated + "..." if not truncated.endswith(".") else truncated
 
     def _effective_tier(
         self, tool_name: str, requested_tier: int, usage_stats: dict[str, int]

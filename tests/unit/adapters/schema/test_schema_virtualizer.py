@@ -298,3 +298,150 @@ class TestTier2DescriptionCompression:
         props = result[0]["inputSchema"]["properties"]
         assert props["code"]["type"] == "string"
         assert props["language"]["type"] == "string"
+
+
+# --- Tier 3: DietMCP Notation ---
+
+SIMPLE_2PARAM_TOOL: dict = {
+    "name": "read_file",
+    "description": "Read contents of a file at the given path.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "Absolute file path",
+            },
+            "encoding": {
+                "type": "string",
+                "description": "File encoding",
+            },
+        },
+        "required": ["path"],
+    },
+}
+
+COMPLEX_8PARAM_TOOL: dict = {
+    "name": "search_code",
+    "description": "Search code with many options.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "path": {"type": "string"},
+            "language": {"type": "string"},
+            "case_sensitive": {"type": "boolean"},
+            "regex": {"type": "boolean"},
+            "max_results": {"type": "integer"},
+            "include_pattern": {"type": "string"},
+            "exclude_pattern": {"type": "string"},
+        },
+        "required": ["query"],
+    },
+}
+
+NESTED_TOOL: dict = {
+    "name": "create_issue",
+    "description": "Create a GitHub issue.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string"},
+            "body": {"type": "string"},
+            "labels": {
+                "type": "object",
+                "properties": {
+                    "names": {"type": "array", "items": {"type": "string"}},
+                },
+            },
+        },
+        "required": ["title"],
+    },
+}
+
+
+class TestTier3DietMCPNotation:
+    """Tier 3 converts simple tools to DietMCP one-liner notation."""
+
+    def test_simple_tool_to_dietmcp(self) -> None:
+        """Simple tool (<=4 params, no nesting) becomes DietMCP notation."""
+        result = SchemaVirtualizer().virtualize([SIMPLE_2PARAM_TOOL], tier=3)
+        tool = result[0]
+        # Description should contain the DietMCP notation
+        assert "read_file(" in tool["description"]
+        assert "path" in tool["description"]
+        # inputSchema should be minimal
+        assert tool["inputSchema"] == {"type": "object"}
+
+    def test_complex_tool_stays_tier2(self) -> None:
+        """Complex tool (>4 params) stays at Tier 2, not DietMCP."""
+        result = SchemaVirtualizer().virtualize([COMPLEX_8PARAM_TOOL], tier=3)
+        tool = result[0]
+        # Should still have full properties (not converted to DietMCP)
+        assert "properties" in tool["inputSchema"]
+        assert "query" in tool["inputSchema"]["properties"]
+
+    def test_nested_tool_stays_tier2(self) -> None:
+        """Tool with nested objects stays at Tier 2."""
+        result = SchemaVirtualizer().virtualize([NESTED_TOOL], tier=3)
+        tool = result[0]
+        assert "properties" in tool["inputSchema"]
+
+    def test_dietmcp_notation_format(self) -> None:
+        """DietMCP notation matches tool_name(params) desc pattern."""
+        import re as re_mod
+
+        result = SchemaVirtualizer().virtualize([SIMPLE_2PARAM_TOOL], tier=3)
+        desc = result[0]["description"]
+        # Format: tool_name(required_param, ?optional_param) short_description
+        pattern = r"^read_file\(path,\s*\?encoding\)\s+.+"
+        assert re_mod.match(pattern, desc), f"DietMCP notation mismatch: {desc!r}"
+
+    def test_optional_params_prefixed(self) -> None:
+        """Optional params have ? prefix in DietMCP notation."""
+        result = SchemaVirtualizer().virtualize([SIMPLE_2PARAM_TOOL], tier=3)
+        desc = result[0]["description"]
+        assert "?encoding" in desc
+
+
+class TestFrequencyAwareTierSelection:
+    """Frequently-called tools are forced to lower tiers."""
+
+    def test_frequent_tool_stays_tier1(self) -> None:
+        """Tool with call_count >= threshold stays at Tier 1 (full schema)."""
+        v = SchemaVirtualizer(frequent_threshold=5)
+        usage = {"read_file": 10}
+        result = v.virtualize([SIMPLE_2PARAM_TOOL], tier=3, usage_stats=usage)
+        tool = result[0]
+        # Should have full properties (Tier 1 cleanup only)
+        assert "properties" in tool["inputSchema"]
+        assert "path" in tool["inputSchema"]["properties"]
+        # Should NOT be DietMCP notation
+        assert "read_file(" not in tool["description"]
+
+    def test_cold_tool_gets_requested_tier(self) -> None:
+        """Tool with zero calls gets the requested tier."""
+        v = SchemaVirtualizer(frequent_threshold=5)
+        usage = {"read_file": 0}
+        result = v.virtualize([SIMPLE_2PARAM_TOOL], tier=3, usage_stats=usage)
+        tool = result[0]
+        # Should be DietMCP (Tier 3)
+        assert tool["inputSchema"] == {"type": "object"}
+
+    def test_no_usage_stats_uses_requested_tier(self) -> None:
+        """Without usage_stats, requested tier is used."""
+        result = SchemaVirtualizer().virtualize([SIMPLE_2PARAM_TOOL], tier=3)
+        tool = result[0]
+        assert tool["inputSchema"] == {"type": "object"}
+
+    def test_mixed_frequency_tools(self) -> None:
+        """Mix of frequent and cold tools in same call."""
+        v = SchemaVirtualizer(frequent_threshold=3)
+        usage = {"read_file": 10, "search_code": 0}
+        tools = [SIMPLE_2PARAM_TOOL, COMPLEX_8PARAM_TOOL]
+        result = v.virtualize(tools, tier=3, usage_stats=usage)
+        # read_file: frequent -> Tier 1 (full schema)
+        assert "properties" in result[0]["inputSchema"]
+        assert "path" in result[0]["inputSchema"]["properties"]
+        # search_code: cold + complex -> Tier 2 (stays Tier 2 because >4 params)
+        assert "properties" in result[1]["inputSchema"]

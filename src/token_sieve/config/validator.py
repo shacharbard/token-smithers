@@ -1,11 +1,17 @@
-"""Config validator -- checks adapter ordering conventions.
+"""Config validator -- checks adapter ordering and cross-section constraints.
 
 Advisory validation: returns a list of warning strings, never raises.
 Enforces the ordering invariant:
   Cleanup -> Content-specific lossy -> Format transforms -> Safety net (truncation)
+Also validates cross-section dependencies (e.g., semantic_cache requires learning).
 """
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from token_sieve.config.schema import TokenSieveConfig
 
 # Adapter categories by execution phase
 CLEANUP = frozenset({
@@ -98,3 +104,21 @@ def _check_phase_ordering(adapter_names: list[str], warnings: list[str]) -> None
             )
         else:
             max_phase_seen = phase
+
+
+def validate_config(config: TokenSieveConfig) -> list[str]:
+    """Validate cross-section config constraints.
+
+    Returns a list of error strings. Empty list means valid.
+    Checks:
+    - semantic_cache.enabled requires learning.enabled (SQLite dependency)
+    """
+    errors: list[str] = []
+
+    if config.semantic_cache.enabled and not config.learning.enabled:
+        errors.append(
+            "semantic_cache.enabled=True requires learning.enabled=True "
+            "(semantic cache depends on SQLite persistence)"
+        )
+
+    return errors
