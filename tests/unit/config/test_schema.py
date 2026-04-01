@@ -9,6 +9,7 @@ import yaml
 
 from token_sieve.config.schema import (
     AdapterConfig,
+    AttentionConfig,
     BackendConfig,
     CacheConfig,
     CompressionConfig,
@@ -346,7 +347,42 @@ class TestTokenSieveConfigExtended:
         assert cfg.cache.schema_cache_ttl == 3600.0
 
     def test_backward_compatible_without_new_sections(self) -> None:
-        """Old configs without reranker/cache sections still work."""
+        """Old configs without reranker/cache/attention sections still work."""
         cfg = TokenSieveConfig(backend={"transport": "stdio"})
         assert isinstance(cfg.reranker, RerankerConfig)
         assert isinstance(cfg.cache, CacheConfig)
+        assert isinstance(cfg.attention, AttentionConfig)
+
+
+class TestAttentionConfig:
+    """AttentionConfig for attention tracking settings."""
+
+    def test_defaults(self) -> None:
+        cfg = AttentionConfig()
+        assert cfg.enabled is False
+        assert cfg.max_tools == 500
+
+    def test_custom_values(self) -> None:
+        cfg = AttentionConfig(enabled=True, max_tools=100)
+        assert cfg.enabled is True
+        assert cfg.max_tools == 100
+
+    def test_extra_fields_forbidden(self) -> None:
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            AttentionConfig(unknown_field="bad")
+
+    def test_attention_defaults_in_config(self) -> None:
+        cfg = TokenSieveConfig()
+        assert isinstance(cfg.attention, AttentionConfig)
+        assert cfg.attention.enabled is False
+        assert cfg.attention.max_tools == 500
+
+    def test_attention_from_yaml(self, tmp_path: Path) -> None:
+        yaml_content = {"attention": {"enabled": True, "max_tools": 200}}
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(yaml.dump(yaml_content))
+        cfg = load_config(config_file)
+        assert cfg.attention.enabled is True
+        assert cfg.attention.max_tools == 200
