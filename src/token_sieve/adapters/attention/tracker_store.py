@@ -60,9 +60,12 @@ class AttentionTrackerStore:
             for name, entry in self._entries.items()
         ]
 
-    def _to_score(self, tool_name: str, entry: _ToolEntry) -> AttentionScore:
+    def _to_score(
+        self, tool_name: str, entry: _ToolEntry, now: float | None = None
+    ) -> AttentionScore:
         """Convert internal entry to AttentionScore with computed decay."""
-        now = time.monotonic()
+        if now is None:
+            now = time.monotonic()
         elapsed = now - entry.last_referenced
         # Exponential decay: score halves every 300 seconds (5 minutes)
         half_life = 300.0
@@ -79,13 +82,17 @@ class AttentionTrackerStore:
         """Evict the lowest-scoring tool if storage exceeds the cap."""
         if len(self._entries) <= self._max_tools:
             return
-        # Find the tool with the lowest computed score
+        # Use a single timestamp snapshot so all entries are scored fairly.
+        now = time.monotonic()
+        # Find the tool with the lowest computed score.
+        # Tiebreaker: evict the one with the oldest last_referenced.
         worst_name: str | None = None
-        worst_score = float("inf")
+        worst_key: tuple[float, float] = (float("inf"), float("inf"))
         for name, entry in self._entries.items():
-            score = self._to_score(name, entry)
-            if score.decay_score < worst_score:
-                worst_score = score.decay_score
+            score = self._to_score(name, entry, now=now)
+            key = (score.decay_score, entry.last_referenced)
+            if key < worst_key:
+                worst_key = key
                 worst_name = name
         if worst_name is not None:
             del self._entries[worst_name]
