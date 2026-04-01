@@ -106,6 +106,26 @@ class ObservabilityConfig(BaseModel):
     log_level: str = "INFO"
 
 
+class RerankerConfig(BaseModel):
+    """Statistical reranker settings."""
+
+    model_config = {"extra": "forbid"}
+
+    enabled: bool = True
+    max_tools: int = 500
+    recency_weight: float = 0.3
+
+
+class CacheConfig(BaseModel):
+    """Cache settings for schema cache and call cache."""
+
+    model_config = {"extra": "forbid"}
+
+    schema_cache_ttl: float = 3600.0
+    call_cache_max: int = 200
+    diff_store_max: int = 100
+
+
 class TokenSieveConfig(BaseModel):
     """Top-level token-sieve configuration.
 
@@ -119,6 +139,8 @@ class TokenSieveConfig(BaseModel):
     filter: FilterConfig = Field(default_factory=FilterConfig)
     compression: CompressionConfig = Field(default_factory=CompressionConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
+    reranker: RerankerConfig = Field(default_factory=RerankerConfig)
+    cache: CacheConfig = Field(default_factory=CacheConfig)
 
 
 def load_config(path: Path) -> TokenSieveConfig:

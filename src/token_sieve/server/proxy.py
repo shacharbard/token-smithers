@@ -36,11 +36,19 @@ class ProxyServer:
         tool_filter: ToolFilter,
         pipeline: CompressionPipeline,
         metrics_sink: StderrMetricsSink,
+        call_cache: Any | None = None,
+        invalidator: Any | None = None,
+        reranker: Any | None = None,
+        schema_cache: Any | None = None,
     ) -> None:
         self._connector = backend_connector
         self._filter = tool_filter
         self._pipeline = pipeline
         self._sink = metrics_sink
+        self._call_cache = call_cache
+        self._invalidator = invalidator
+        self._reranker = reranker
+        self._schema_cache = schema_cache
         self._server = self._build_mcp_server()
 
     def _build_mcp_server(self) -> Server:
@@ -60,9 +68,37 @@ class ProxyServer:
         return server
 
     async def handle_list_tools(self) -> list[types.Tool]:
-        """Return backend tool list, filtered through ToolFilter."""
-        tools = await self._connector.list_tools()
-        return self._filter.filter_tools(tools)
+        """Return backend tool list, filtered through ToolFilter.
+
+        If SchemaCache is configured, uses it for tool retrieval.
+        If StatisticalReranker is configured, reorders tools by usage.
+        """
+        if self._schema_cache is not None:
+            tools = await self._schema_cache.list_tools()
+        else:
+            tools = await self._connector.list_tools()
+
+        filtered = self._filter.filter_tools(tools)
+
+        if self._reranker is not None:
+            from token_sieve.domain.tool_metadata import ToolMetadata
+
+            # Convert types.Tool to ToolMetadata for reranker
+            tool_metas = [
+                ToolMetadata(
+                    name=t.name,
+                    title=getattr(t, "title", None),
+                    description=t.description or "",
+                    input_schema=t.inputSchema or {},
+                )
+                for t in filtered
+            ]
+            reranked = self._reranker.transform(tool_metas)
+            # Rebuild types.Tool list in reranked order
+            tool_by_name = {t.name: t for t in filtered}
+            filtered = [tool_by_name[m.name] for m in reranked if m.name in tool_by_name]
+
+        return filtered
 
     async def handle_call_tool(
         self, name: str, arguments: dict[str, Any]
@@ -70,10 +106,13 @@ class ProxyServer:
         """Forward tool call to backend, compress text results.
 
         1. Gate: reject blocked tools with error response
-        2. Forward to backend via connector
-        3. If backend error, pass through as-is
-        4. For text content: wrap in ContentEnvelope, run pipeline, emit metrics
-        5. Non-text content passes through unchanged
+        2. Check call cache for exact match (short-circuit)
+        3. Forward to backend via connector
+        4. If backend error, pass through as-is
+        5. For text content: wrap in ContentEnvelope, run pipeline, emit metrics
+        6. Non-text content passes through unchanged
+        7. Cache result and record usage
+        8. Trigger invalidation for mutating calls
         """
         # Gate: blocked tools
         if not self._filter.is_allowed(name):
@@ -86,6 +125,15 @@ class ProxyServer:
                 ],
                 isError=True,
             )
+
+        # Short-circuit: check call cache before forwarding
+        if self._call_cache is not None:
+            cached = self._call_cache.get(name, arguments)
+            if cached is not None:
+                # Record usage even for cached hits
+                if self._reranker is not None:
+                    self._reranker.record_call(name)
+                return cached
 
         # Forward to backend
         result = await self._connector.call_tool(name, arguments)
@@ -120,12 +168,26 @@ class ProxyServer:
                 compressed_content.append(item)
 
         if not has_text:
-            return result
+            final_result = result
+        else:
+            final_result = types.CallToolResult(
+                content=compressed_content,
+                isError=False,
+            )
 
-        return types.CallToolResult(
-            content=compressed_content,
-            isError=False,
-        )
+        # Cache the result
+        if self._call_cache is not None:
+            self._call_cache.put(name, arguments, final_result)
+
+        # Record usage in reranker
+        if self._reranker is not None:
+            self._reranker.record_call(name)
+
+        # Trigger invalidation for mutating calls
+        if self._invalidator is not None and self._invalidator.is_mutating(name):
+            self._invalidator.invalidate_for(name)
+
+        return final_result
 
     async def run(self) -> None:
         """Start the MCP server on stdio transport."""
@@ -253,15 +315,44 @@ class ProxyServer:
         # Build metrics sink
         sink = StderrMetricsSink()
 
+        # Build cache, reranker, and invalidator
+        from token_sieve.adapters.cache.call_cache import IdempotentCallCache
+        from token_sieve.adapters.cache.diff_state_store import DiffStateStore
+        from token_sieve.adapters.cache.invalidation import WriteThruInvalidator
+        from token_sieve.adapters.cache.schema_cache import SchemaCache
+        from token_sieve.adapters.rerank.statistical_reranker import StatisticalReranker
+
+        call_cache = IdempotentCallCache(max_entries=config.cache.call_cache_max)
+        diff_store = DiffStateStore(max_entries=config.cache.diff_store_max)
+        invalidator = WriteThruInvalidator()
+        invalidator.register_observer(call_cache)
+        invalidator.register_observer(diff_store)
+
+        reranker: StatisticalReranker | None = None
+        if config.reranker.enabled:
+            reranker = StatisticalReranker(
+                max_tools=config.reranker.max_tools,
+                recency_weight=config.reranker.recency_weight,
+            )
+
         # Placeholder connector -- real one requires async backend session
         # For now, create a stub that will be replaced at run-time
         stub_connector = _StubConnector()
+
+        schema_cache = SchemaCache(
+            provider=stub_connector,
+            ttl_seconds=config.cache.schema_cache_ttl,
+        )
 
         return cls(
             backend_connector=stub_connector,
             tool_filter=tool_filter,
             pipeline=pipeline,
             metrics_sink=sink,
+            call_cache=call_cache,
+            invalidator=invalidator,
+            reranker=reranker,
+            schema_cache=schema_cache,
         )
 
 
