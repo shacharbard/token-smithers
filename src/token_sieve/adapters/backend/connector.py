@@ -32,6 +32,15 @@ class BackendConnector:
         self._session = session
         self._tools_cache: list[types.Tool] | None = None
         self._lock = asyncio.Lock()
+        self._instructions: str | None = None
+
+    def get_instructions(self) -> str | None:
+        """Return cached backend instructions, or None if not captured."""
+        return self._instructions
+
+    def set_instructions(self, instructions: str) -> None:
+        """Store backend instructions for later retrieval."""
+        self._instructions = instructions
 
     async def list_tools(self) -> list[types.Tool]:
         """Return tools from backend, caching after first call.

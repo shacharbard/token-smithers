@@ -142,7 +142,26 @@ async def _run_proxy(config_path: str | None = None) -> int:
         env=config.backend.env or None,
     )
     async with transport.connect() as session:
-        proxy.rebind_connector(BackendConnector(session))
+        connector = BackendConnector(session)
+        proxy.rebind_connector(connector)
+
+        # Initialize interception: compress backend instructions
+        if (
+            config.system_prompt.enabled
+            and config.system_prompt.compress_instructions
+        ):
+            instructions = connector.get_instructions()
+            if instructions:
+                try:
+                    envelope = ContentEnvelope(
+                        content=instructions,
+                        content_type=ContentType.TEXT,
+                    )
+                    compressed, _events = proxy._pipeline.process(envelope)
+                    connector.set_instructions(compressed.content)
+                except Exception:
+                    logger.debug("Instruction compression failed, using original")
+
         await proxy.run()
     return 0
 
