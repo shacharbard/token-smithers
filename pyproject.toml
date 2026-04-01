@@ -32,11 +32,12 @@ token-sieve = "token_sieve.cli.main:main"
 packages = ["src/token_sieve"]
 
 [tool.pytest.ini_options]
-addopts = "--cov=token_sieve.domain --cov=token_sieve.adapters --cov=token_sieve.server --cov=token_sieve.cli --cov-fail-under=60 --cov-branch"
+addopts = "--cov=token_sieve.domain --cov=token_sieve.adapters --cov=token_sieve.server --cov=token_sieve.cli --cov-fail-under=60 --cov-branch -m \"not benchmark\""
 testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "integration: full MCP round-trip integration tests",
+    "benchmark: compression pipeline benchmark tests (excluded from default runs)",
 ]
 
 [tool.coverage.run]
