@@ -40,6 +40,10 @@ class ProxyServer:
         invalidator: Any | None = None,
         reranker: Any | None = None,
         schema_cache: Any | None = None,
+        schema_virtualizer: Any | None = None,
+        learning_store: Any | None = None,
+        semantic_cache: Any | None = None,
+        metrics_collector: Any | None = None,
     ) -> None:
         self._connector = backend_connector
         self._filter = tool_filter
@@ -49,6 +53,10 @@ class ProxyServer:
         self._invalidator = invalidator
         self._reranker = reranker
         self._schema_cache = schema_cache
+        self._schema_virtualizer = schema_virtualizer
+        self._learning_store = learning_store
+        self._semantic_cache = semantic_cache
+        self._metrics_collector = metrics_collector
         self._server = self._build_mcp_server()
 
     def rebind_connector(self, connector: Any) -> None:
@@ -108,7 +116,101 @@ class ProxyServer:
             tool_by_name = {t.name: t for t in filtered}
             filtered = [tool_by_name[m.name] for m in reranked if m.name in tool_by_name]
 
+        # Schema virtualization: compress tool schemas after reranking
+        if self._schema_virtualizer is not None:
+            filtered = self._apply_schema_virtualization(filtered)
+
         return filtered
+
+    def _apply_schema_virtualization(
+        self, tools: list[types.Tool]
+    ) -> list[types.Tool]:
+        """Run schema virtualizer over tool list, returning virtualized tools."""
+        # Convert to dicts for virtualizer
+        tool_dicts = [
+            {
+                "name": t.name,
+                "description": t.description or "",
+                "inputSchema": t.inputSchema or {},
+            }
+            for t in tools
+        ]
+        # Get usage stats from reranker if available
+        usage_stats: dict[str, int] | None = None
+        if self._reranker is not None:
+            usage_stats = {
+                name: data.get("count", 0)
+                for name, data in getattr(self._reranker, "_scores", {}).items()
+            }
+        virtualized = self._schema_virtualizer.virtualize(
+            tool_dicts, usage_stats=usage_stats
+        )
+        # Rebuild types.Tool from virtualized dicts
+        return [
+            types.Tool(
+                name=vt["name"],
+                description=vt.get("description", ""),
+                inputSchema=vt.get("inputSchema", {"type": "object"}),
+            )
+            for vt in virtualized
+        ]
+
+    async def _check_semantic_cache(
+        self, name: str, arguments: dict[str, Any]
+    ) -> types.CallToolResult | None:
+        """Check semantic cache for a similar prior result."""
+        from token_sieve.adapters.cache.param_normalizer import (
+            compute_args_hash,
+            normalize_args,
+        )
+
+        args_normalized = normalize_args(arguments)
+        hit = await self._semantic_cache.lookup_similar(
+            name, args_normalized, threshold=0.85
+        )
+        if hit is not None:
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text=hit.result_text)],
+                isError=False,
+            )
+        return None
+
+    async def _store_semantic_cache(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        result: types.CallToolResult,
+    ) -> None:
+        """Store a result in the semantic cache."""
+        from token_sieve.adapters.cache.param_normalizer import (
+            compute_args_hash,
+            normalize_args,
+        )
+
+        # Only cache text results
+        texts = [
+            item.text
+            for item in result.content
+            if isinstance(item, types.TextContent) and item.text
+        ]
+        if not texts:
+            return
+        combined = "\n".join(texts)
+        args_normalized = normalize_args(arguments)
+        args_hash = compute_args_hash(arguments)
+        await self._semantic_cache.cache_result(
+            name, args_normalized, args_hash, combined
+        )
+
+    async def _record_to_learning_store(
+        self, name: str, events: list[Any]
+    ) -> None:
+        """Record tool call and compression events to learning store."""
+        await self._learning_store.record_call(name, "default")
+        for event in events:
+            await self._learning_store.record_compression_event(
+                "session", event, name
+            )
 
     async def handle_call_tool(
         self, name: str, arguments: dict[str, Any]
@@ -136,6 +238,14 @@ class ProxyServer:
                 isError=True,
             )
 
+        # Short-circuit: check semantic cache before exact-match cache
+        if self._semantic_cache is not None:
+            sem_result = await self._check_semantic_cache(name, arguments)
+            if sem_result is not None:
+                if self._reranker is not None:
+                    self._reranker.record_call(name)
+                return sem_result
+
         # Short-circuit: check call cache before forwarding
         if self._call_cache is not None:
             cached = self._call_cache.get(name, arguments)
@@ -154,6 +264,7 @@ class ProxyServer:
 
         # Process text content through compression pipeline
         compressed_content: list[types.TextContent | types.ImageContent | types.EmbeddedResource] = []
+        events_for_learning: list[Any] = []
         has_text = False
 
         for item in result.content:
@@ -176,6 +287,7 @@ class ProxyServer:
                 for event in events:
                     msg = self._sink.format_event(event, tool_name=name)
                     self._sink.emit(msg)
+                    events_for_learning.append(event)
 
                 compressed_content.append(
                     types.TextContent(type="text", text=compressed_envelope.content)
@@ -196,9 +308,22 @@ class ProxyServer:
         if self._call_cache is not None:
             self._call_cache.put(name, arguments, final_result)
 
+        # Store in semantic cache
+        if self._semantic_cache is not None:
+            await self._store_semantic_cache(name, arguments, final_result)
+
         # Record usage in reranker
         if self._reranker is not None:
             self._reranker.record_call(name)
+
+        # Record to learning store
+        if self._learning_store is not None:
+            await self._record_to_learning_store(name, events_for_learning)
+
+        # Record to metrics collector
+        if self._metrics_collector is not None:
+            for event in events_for_learning:
+                self._metrics_collector.record(event)
 
         # Trigger invalidation for mutating calls
         if self._invalidator is not None and self._invalidator.is_mutating(name):
@@ -276,6 +401,22 @@ class ProxyServer:
         "truncation": (
             "token_sieve.adapters.compression.truncation",
             "TruncationCompressor",
+        ),
+        "key_aliasing": (
+            "token_sieve.adapters.compression.key_aliasing",
+            "KeyAliasingStrategy",
+        ),
+        "ast_skeleton": (
+            "token_sieve.adapters.compression.ast_skeleton",
+            "ASTSkeletonExtractor",
+        ),
+        "graph_encoder": (
+            "token_sieve.adapters.compression.graph_encoder",
+            "GraphAdjacencyEncoder",
+        ),
+        "progressive_disclosure": (
+            "token_sieve.adapters.compression.progressive_disclosure",
+            "ProgressiveDisclosureStrategy",
         ),
     }
 
