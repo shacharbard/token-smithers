@@ -22,6 +22,7 @@ class ContentType(Enum):
     CODE = auto()
     CLI_OUTPUT = auto()
     UNKNOWN = auto()
+    SCHEMA = "schema"
 
 
 @dataclass(frozen=True)

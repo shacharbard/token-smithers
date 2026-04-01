@@ -21,9 +21,14 @@ from token_sieve.domain.model import (
 
 class TestContentType:
     def test_has_all_expected_members(self):
-        expected = {"TEXT", "JSON", "CODE", "CLI_OUTPUT", "UNKNOWN"}
+        expected = {"TEXT", "JSON", "CODE", "CLI_OUTPUT", "UNKNOWN", "SCHEMA"}
         actual = {member.name for member in ContentType}
         assert actual == expected
+
+    def test_schema_member_value(self):
+        """ContentType.SCHEMA exists and round-trips via string value."""
+        assert ContentType.SCHEMA.value == "schema"
+        assert ContentType("schema") == ContentType.SCHEMA
 
     def test_members_are_distinct(self):
         values = [member.value for member in ContentType]
