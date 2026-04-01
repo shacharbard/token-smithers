@@ -126,6 +126,19 @@ class CacheConfig(BaseModel):
     diff_store_max: int = 100
 
 
+class AttentionConfig(BaseModel):
+    """Attention tracking settings.
+
+    Controls the attention-aware routing infrastructure.
+    Disabled by default until Phase 4 sideband provides real signals.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    enabled: bool = False
+    max_tools: int = 500
+
+
 class TokenSieveConfig(BaseModel):
     """Top-level token-sieve configuration.
 
@@ -141,6 +154,7 @@ class TokenSieveConfig(BaseModel):
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     reranker: RerankerConfig = Field(default_factory=RerankerConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
+    attention: AttentionConfig = Field(default_factory=AttentionConfig)
 
 
 def load_config(path: Path) -> TokenSieveConfig:
