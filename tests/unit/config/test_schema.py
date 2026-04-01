@@ -8,6 +8,7 @@ import pytest
 import yaml
 
 from token_sieve.config.schema import (
+    AdapterConfig,
     BackendConfig,
     CompressionConfig,
     FilterConfig,
@@ -215,3 +216,83 @@ class TestFilterConfigModeValidation:
 
         with pytest.raises(ValidationError):
             FilterConfig(mode="foobar")
+
+
+class TestAdapterConfig:
+    """AdapterConfig model for per-adapter settings."""
+
+    def test_defaults(self) -> None:
+        cfg = AdapterConfig(name="whitespace_normalizer")
+        assert cfg.name == "whitespace_normalizer"
+        assert cfg.enabled is True
+        assert cfg.settings == {}
+
+    def test_custom_settings(self) -> None:
+        cfg = AdapterConfig(
+            name="log_filter",
+            enabled=True,
+            settings={"retain_levels": ["ERROR", "WARN"]},
+        )
+        assert cfg.name == "log_filter"
+        assert cfg.settings["retain_levels"] == ["ERROR", "WARN"]
+
+    def test_disabled_adapter(self) -> None:
+        cfg = AdapterConfig(name="sentence_scorer", enabled=False)
+        assert cfg.enabled is False
+
+
+class TestCompressionConfigAdapters:
+    """CompressionConfig extended with ordered adapter list."""
+
+    def test_default_adapters_list(self) -> None:
+        """Default adapter list follows Decision 5 ordering."""
+        cfg = CompressionConfig()
+        assert isinstance(cfg.adapters, list)
+        assert len(cfg.adapters) > 0
+        # All entries are AdapterConfig
+        for adapter in cfg.adapters:
+            assert isinstance(adapter, AdapterConfig)
+
+    def test_default_adapter_ordering(self) -> None:
+        """Default ordering: cleanup first, then lossy, then transforms, then safety nets."""
+        cfg = CompressionConfig()
+        names = [a.name for a in cfg.adapters]
+        # Cleanup adapters should come before format transforms
+        assert names.index("whitespace_normalizer") < names.index("toon_compressor")
+        # Safety nets should come last
+        assert names.index("smart_truncation") == len(names) - 1
+
+    def test_custom_adapter_order(self) -> None:
+        """Custom adapter order is accepted."""
+        custom = [
+            AdapterConfig(name="whitespace_normalizer"),
+            AdapterConfig(name="smart_truncation"),
+        ]
+        cfg = CompressionConfig(adapters=custom)
+        assert len(cfg.adapters) == 2
+        assert cfg.adapters[0].name == "whitespace_normalizer"
+
+    def test_per_adapter_settings(self) -> None:
+        """Per-adapter settings are passed through."""
+        custom = [
+            AdapterConfig(
+                name="sentence_scorer",
+                settings={"sentence_count": 3},
+            ),
+        ]
+        cfg = CompressionConfig(adapters=custom)
+        assert cfg.adapters[0].settings["sentence_count"] == 3
+
+    def test_size_gate_threshold_field(self) -> None:
+        """CompressionConfig has a size_gate_threshold field."""
+        cfg = CompressionConfig()
+        assert cfg.size_gate_threshold == 2000
+
+    def test_custom_size_gate_threshold(self) -> None:
+        cfg = CompressionConfig(size_gate_threshold=5000)
+        assert cfg.size_gate_threshold == 5000
+
+    def test_backward_compatibility_no_adapters(self) -> None:
+        """Config without adapters key uses default adapter list."""
+        cfg = CompressionConfig(enabled=True, strategy="passthrough")
+        assert len(cfg.adapters) > 0  # defaults populated
