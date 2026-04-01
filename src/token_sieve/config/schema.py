@@ -31,6 +31,47 @@ class FilterConfig(BaseModel):
     patterns: list[str] = Field(default_factory=list)
 
 
+class AdapterConfig(BaseModel):
+    """Per-adapter configuration entry.
+
+    Each entry in the ordered adapter list specifies the adapter name,
+    whether it's enabled, and any adapter-specific settings.
+    """
+
+    name: str
+    enabled: bool = True
+    settings: dict[str, Any] = Field(default_factory=dict)
+
+
+def _default_adapters() -> list[AdapterConfig]:
+    """Default adapter ordering per Decision 5.
+
+    Cleanup -> Content-specific lossy -> Sentence/RLE ->
+    Format transforms -> FileRedirect -> SmartTruncation (safety net).
+    """
+    return [
+        # Cleanup layer
+        AdapterConfig(name="whitespace_normalizer"),
+        AdapterConfig(name="null_field_elider"),
+        AdapterConfig(name="path_prefix_deduplicator"),
+        AdapterConfig(name="timestamp_normalizer"),
+        # Content-specific lossy (off by default)
+        AdapterConfig(name="log_level_filter", enabled=False),
+        AdapterConfig(name="error_stack_compressor", enabled=False),
+        AdapterConfig(name="code_comment_stripper", enabled=False),
+        # Sentence scorer + RLE
+        AdapterConfig(name="sentence_scorer", enabled=False),
+        AdapterConfig(name="rle_encoder"),
+        # Format transforms (mutually exclusive via transformed_by)
+        AdapterConfig(name="toon_compressor"),
+        AdapterConfig(name="yaml_transcoder"),
+        # File redirect
+        AdapterConfig(name="file_redirect", enabled=False),
+        # Safety net (always last)
+        AdapterConfig(name="smart_truncation"),
+    ]
+
+
 class CompressionConfig(BaseModel):
     """Compression pipeline settings."""
 
@@ -40,6 +81,8 @@ class CompressionConfig(BaseModel):
     strategy: str = "passthrough"
     max_tokens: int = 4096
     dedup_window: int = 50
+    size_gate_threshold: int = 2000
+    adapters: list[AdapterConfig] = Field(default_factory=_default_adapters)
 
     @field_validator("max_tokens")
     @classmethod
