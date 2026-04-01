@@ -28,7 +28,7 @@ class TestFirstCall:
         envelope = ContentEnvelope(
             content="line 1\nline 2\nline 3",
             content_type=ContentType.TEXT,
-            metadata=(("source_tool", "read_file"), ("source_args", '{"path": "a"}')),
+            metadata={"source_tool": "read_file", "source_args": '{"path": "a"}'},
         )
         result = strategy.compress(envelope)
         assert result.content == "line 1\nline 2\nline 3"
@@ -39,7 +39,7 @@ class TestFirstCall:
         envelope = ContentEnvelope(
             content="hello",
             content_type=ContentType.TEXT,
-            metadata=(("source_tool", "read_file"), ("source_args", '{"path": "a"}')),
+            metadata={"source_tool": "read_file", "source_args": '{"path": "a"}'},
         )
         strategy.compress(envelope)
         assert store.get_previous("read_file", {"path": "a"}) == "hello"
@@ -54,7 +54,7 @@ class TestSameContent:
         envelope = ContentEnvelope(
             content="unchanged",
             content_type=ContentType.TEXT,
-            metadata=(("source_tool", "read_file"), ("source_args", '{"path": "a"}')),
+            metadata={"source_tool": "read_file", "source_args": '{"path": "a"}'},
         )
         strategy.compress(envelope)
         result = strategy.compress(envelope)
@@ -67,7 +67,7 @@ class TestChangedContent:
     def test_changed_content_returns_diff(self) -> None:
         store = DiffStateStore()
         strategy = SemanticDiffStrategy(store=store)
-        meta = (("source_tool", "read_file"), ("source_args", '{"path": "a"}'))
+        meta = {"source_tool": "read_file", "source_args": '{"path": "a"}'}
         env1 = ContentEnvelope(
             content="line 1\nline 2\nline 3",
             content_type=ContentType.TEXT,
@@ -93,7 +93,7 @@ class TestCanHandle:
         envelope = ContentEnvelope(
             content="test",
             content_type=ContentType.TEXT,
-            metadata=(("source_tool", "read_file"),),
+            metadata={"source_tool": "read_file"},
         )
         assert strategy.can_handle(envelope) is True
 
@@ -111,7 +111,7 @@ class TestCanHandle:
         strategy = SemanticDiffStrategy(store=store)
         envelope = ContentEnvelope(
             content="binary data",
-            content_type=ContentType.BINARY,
-            metadata=(("source_tool", "read_file"),),
+            content_type=ContentType.UNKNOWN,
+            metadata={"source_tool": "read_file"},
         )
         assert strategy.can_handle(envelope) is False
