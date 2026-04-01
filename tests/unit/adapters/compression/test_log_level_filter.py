@@ -178,3 +178,44 @@ class TestLogLevelFilterSpecific:
         """Logs with 5+ matching lines -> can_handle True."""
         envelope = make_envelope(content=LOG_MIXED)
         assert strategy.can_handle(envelope) is True
+
+    def test_regex_matches_iso8601_z_timestamp(self, strategy, make_envelope):
+        """Logs with ISO 8601 'Z' timezone suffix must be recognised.
+
+        Real-world logs often use timestamps like '2026-03-15T10:30:00.123Z'.
+        The regex must handle the trailing 'Z' after fractional seconds.
+        """
+        iso_logs = "\n".join(
+            [
+                "2026-03-15T10:30:00.123Z INFO  [main] Starting application v2.1.0",
+                "2026-03-15T10:30:00.125Z DEBUG [config] Loading configuration",
+                "2026-03-15T10:30:00.130Z DEBUG [config] Backend transport: stdio",
+                "2026-03-15T10:30:00.131Z WARN  [config] Deprecated option used",
+                "2026-03-15T10:30:00.135Z ERROR [server] Bind failed on port 8080",
+                "2026-03-15T10:30:01.200Z DEBUG [handler] Received request",
+            ]
+        )
+        envelope = make_envelope(content=iso_logs)
+        assert strategy.can_handle(envelope) is True
+
+    def test_regex_matches_padded_levels(self, strategy, make_envelope):
+        """Padded level keywords (e.g. 'INFO  ' with trailing spaces) must match."""
+        padded_logs = "\n".join(
+            [
+                "2024-01-15 10:00:01 INFO  Starting application server",
+                "2024-01-15 10:00:02 WARN  High memory usage",
+                "2024-01-15 10:00:03 ERROR Connection timeout",
+                "2024-01-15 10:00:04 INFO  Retrying connection",
+                "2024-01-15 10:00:05 DEBUG Pool initialised",
+                "2024-01-15 10:00:06 INFO  Ready",
+            ]
+        )
+        envelope = make_envelope(content=padded_logs)
+        assert strategy.can_handle(envelope) is True
+
+    def test_benchmark_corpus_log_can_handle(self, strategy):
+        """LogLevelFilter.can_handle returns True for benchmark corpus log content."""
+        from tests.benchmark.corpus import BENCHMARK_CORPUS
+
+        envelope = BENCHMARK_CORPUS["read_logs"]
+        assert strategy.can_handle(envelope) is True
