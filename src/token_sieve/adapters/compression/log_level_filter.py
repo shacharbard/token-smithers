@@ -16,7 +16,7 @@ from token_sieve.domain.model import ContentEnvelope
 
 # Pattern: optional timestamp prefix, then a log level keyword
 _LOG_LINE_RE = re.compile(
-    r"^(?:\d{4}[-/]\d{2}[-/]\d{2}[\sT]\d{2}:\d{2}:\d{2}[.\d]*\s*)?"
+    r"^(?:\d{4}[-/]\d{2}[-/]\d{2}[\sT]\d{2}:\d{2}:\d{2}[.\d]*Z?\s+)?"
     r"(DEBUG|TRACE|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL)\b",
     re.IGNORECASE,
 )
