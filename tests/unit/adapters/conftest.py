@@ -11,6 +11,7 @@ import pytest
 
 from token_sieve.domain.model import ContentEnvelope, ContentType
 from token_sieve.domain.session import SessionContext
+from token_sieve.domain.tool_metadata import ToolMetadata
 
 
 # ---------------------------------------------------------------------------
@@ -117,3 +118,70 @@ class DeduplicationStrategyContract:
         envelope = make_envelope(content="unique content never seen before")
         session = make_session()
         assert dedup_strategy.is_duplicate(envelope, session) is False
+
+
+# ---------------------------------------------------------------------------
+# Shared fixtures: ToolMetadata
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def make_tool():
+    """Factory fixture for ToolMetadata instances."""
+
+    def _factory(
+        name: str = "test-tool",
+        title: str | None = None,
+        description: str = "A test tool",
+        input_schema: dict | None = None,
+    ) -> ToolMetadata:
+        return ToolMetadata(
+            name=name,
+            title=title,
+            description=description,
+            input_schema=input_schema or {"type": "object"},
+        )
+
+    return _factory
+
+
+# ---------------------------------------------------------------------------
+# Contract: ToolListTransformer
+# ---------------------------------------------------------------------------
+
+
+class ToolListTransformerContract:
+    """Contract tests every ToolListTransformer adapter must pass.
+
+    Subclass this AND provide a ``transformer`` fixture that returns
+    the adapter under test.
+    """
+
+    def test_transform_returns_list(self, transformer, make_tool):
+        """transform() must return a list."""
+        tools = [make_tool(name="a"), make_tool(name="b")]
+        result = transformer.transform(tools)
+        assert isinstance(result, list)
+
+    def test_transform_preserves_all_tools(self, transformer, make_tool):
+        """transform() must not lose any tools (reorder only, no removal)."""
+        tools = [make_tool(name="x"), make_tool(name="y"), make_tool(name="z")]
+        result = transformer.transform(tools)
+        result_names = {t.name for t in result}
+        input_names = {t.name for t in tools}
+        assert result_names == input_names
+
+    def test_transform_returns_tool_metadata(self, transformer, make_tool):
+        """transform() must return valid ToolMetadata objects."""
+        tools = [make_tool(name="alpha")]
+        result = transformer.transform(tools)
+        assert all(isinstance(t, ToolMetadata) for t in result)
+
+    def test_transform_empty_list(self, transformer):
+        """transform() with empty list returns empty list."""
+        result = transformer.transform([])
+        assert result == []
+
+    def test_record_call_does_not_raise(self, transformer):
+        """record_call() accepts a tool name without error."""
+        transformer.record_call("any-tool")
