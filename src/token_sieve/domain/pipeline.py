@@ -31,8 +31,13 @@ class CompressionPipeline:
         default_factory=dict, init=False
     )
 
-    def __init__(self, counter: TokenCounter) -> None:
+    def __init__(
+        self,
+        counter: TokenCounter,
+        size_gate_threshold: int | None = None,
+    ) -> None:
         self._counter = counter
+        self._size_gate_threshold = size_gate_threshold
         self._routes: dict[ContentType, list[CompressionStrategy]] = {}
 
     def register(
@@ -50,6 +55,13 @@ class CompressionPipeline:
         CompressionEvent records -- one per strategy that actually fired.
         """
         events: list[CompressionEvent] = []
+
+        # Size gate: skip all compression for small content
+        if self._size_gate_threshold is not None:
+            token_count = self._counter.count(envelope.content)
+            if token_count <= self._size_gate_threshold:
+                return envelope, events
+
         chain = self._routes.get(envelope.content_type, [])
 
         for strategy in chain:

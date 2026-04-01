@@ -136,16 +136,80 @@ class ProxyServer:
                 self._server.create_initialization_options(),
             )
 
+    # Adapter name -> (module_path, class_name) registry
+    _ADAPTER_REGISTRY: dict[str, tuple[str, str]] = {
+        "whitespace_normalizer": (
+            "token_sieve.adapters.compression.whitespace_normalizer",
+            "WhitespaceNormalizer",
+        ),
+        "null_field_elider": (
+            "token_sieve.adapters.compression.null_field_elider",
+            "NullFieldElider",
+        ),
+        "path_prefix_deduplicator": (
+            "token_sieve.adapters.compression.path_prefix_deduplicator",
+            "PathPrefixDeduplicator",
+        ),
+        "timestamp_normalizer": (
+            "token_sieve.adapters.compression.timestamp_normalizer",
+            "TimestampNormalizer",
+        ),
+        "log_level_filter": (
+            "token_sieve.adapters.compression.log_level_filter",
+            "LogLevelFilter",
+        ),
+        "error_stack_compressor": (
+            "token_sieve.adapters.compression.error_stack_compressor",
+            "ErrorStackCompressor",
+        ),
+        "code_comment_stripper": (
+            "token_sieve.adapters.compression.code_comment_stripper",
+            "CodeCommentStripper",
+        ),
+        "sentence_scorer": (
+            "token_sieve.adapters.compression.sentence_scorer",
+            "SentenceScorer",
+        ),
+        "rle_encoder": (
+            "token_sieve.adapters.compression.rle_encoder",
+            "RunLengthEncoder",
+        ),
+        "toon_compressor": (
+            "token_sieve.adapters.compression.toon_compressor",
+            "ToonCompressor",
+        ),
+        "yaml_transcoder": (
+            "token_sieve.adapters.compression.yaml_transcoder",
+            "YamlTranscoder",
+        ),
+        "file_redirect": (
+            "token_sieve.adapters.compression.file_redirect",
+            "FileRedirectStrategy",
+        ),
+        "smart_truncation": (
+            "token_sieve.adapters.compression.smart_truncation",
+            "SmartTruncation",
+        ),
+        "passthrough": (
+            "token_sieve.adapters.compression.passthrough",
+            "PassthroughStrategy",
+        ),
+        "truncation": (
+            "token_sieve.adapters.compression.truncation",
+            "TruncationCompressor",
+        ),
+    }
+
     @classmethod
     def create_from_config(cls, config: TokenSieveConfig) -> ProxyServer:
         """Wire all dependencies from config and return a ProxyServer.
 
         Creates: ToolFilter, CompressionPipeline (with configured strategies),
-        StderrMetricsSink. BackendConnector is NOT created here — it requires
+        StderrMetricsSink. BackendConnector is NOT created here -- it requires
         an active async session, so it's injected at run-time.
         """
-        from token_sieve.adapters.compression.passthrough import PassthroughStrategy
-        from token_sieve.adapters.compression.truncation import TruncationCompressor
+        import importlib
+
         from token_sieve.domain.counters import CharEstimateCounter
 
         # Build tool filter
@@ -153,29 +217,43 @@ class ProxyServer:
 
         # Build compression pipeline
         counter = CharEstimateCounter()
-        strategies = []
+        pipeline = CompressionPipeline(
+            counter=counter,
+            size_gate_threshold=config.compression.size_gate_threshold,
+        )
 
         if config.compression.enabled:
-            strategy_name = config.compression.strategy
-            if strategy_name == "truncation":
-                strategies.append(
-                    TruncationCompressor(
-                        max_tokens=config.compression.max_tokens,
-                        counter=counter,
-                    )
-                )
-            else:
-                # Default: passthrough
-                strategies.append(PassthroughStrategy())
+            for adapter_cfg in config.compression.adapters:
+                if not adapter_cfg.enabled:
+                    continue
 
-        pipeline = CompressionPipeline(counter=counter)
-        for strategy in strategies:
-            pipeline.register(ContentType.TEXT, strategy)
+                registry_entry = cls._ADAPTER_REGISTRY.get(adapter_cfg.name)
+                if registry_entry is None:
+                    print(
+                        f"Warning: unknown adapter '{adapter_cfg.name}', skipping",
+                        file=__import__("sys").stderr,
+                    )
+                    continue
+
+                module_path, class_name = registry_entry
+                try:
+                    mod = importlib.import_module(module_path)
+                    adapter_cls = getattr(mod, class_name)
+                    adapter = adapter_cls(**adapter_cfg.settings)
+                except Exception as exc:
+                    print(
+                        f"Warning: failed to instantiate adapter "
+                        f"'{adapter_cfg.name}': {exc}",
+                        file=__import__("sys").stderr,
+                    )
+                    continue
+
+                pipeline.register(ContentType.TEXT, adapter)
 
         # Build metrics sink
         sink = StderrMetricsSink()
 
-        # Placeholder connector — real one requires async backend session
+        # Placeholder connector -- real one requires async backend session
         # For now, create a stub that will be replaced at run-time
         stub_connector = _StubConnector()
 
