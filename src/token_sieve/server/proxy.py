@@ -83,7 +83,47 @@ class ProxyServer:
         ) -> types.CallToolResult:
             return await self.handle_call_tool(name, arguments or {})
 
+        # Register resource handlers for dashboard
+        if self._metrics_collector is not None:
+            from mcp.types import Resource
+
+            @server.list_resources()
+            async def handle_list_resources() -> list[Resource]:
+                return await self.handle_list_resources()
+
+            @server.read_resource()
+            async def handle_read_resource(uri: str) -> str:
+                return await self.handle_read_resource(uri)
+
         return server
+
+    async def handle_list_resources(self) -> list[Any]:
+        """Return available MCP resources."""
+        from mcp.types import Resource
+
+        resources = []
+        if self._metrics_collector is not None:
+            resources.append(
+                Resource(
+                    uri="token-sieve://stats",
+                    name="Token Sieve Statistics",
+                    description="Session compression metrics and per-strategy breakdown",
+                    mimeType="application/json",
+                )
+            )
+        return resources
+
+    async def handle_read_resource(self, uri: str) -> str:
+        """Read an MCP resource by URI."""
+        import json
+
+        if uri == "token-sieve://stats" and self._metrics_collector is not None:
+            data = {
+                "session_summary": self._metrics_collector.session_summary(),
+                "strategy_breakdown": self._metrics_collector.strategy_breakdown(),
+            }
+            return json.dumps(data, indent=2)
+        raise ValueError(f"Unknown resource: {uri}")
 
     async def handle_list_tools(self) -> list[types.Tool]:
         """Return backend tool list, filtered through ToolFilter.

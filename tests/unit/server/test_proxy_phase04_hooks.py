@@ -289,7 +289,7 @@ class TestMCPResourceDashboard:
         # Access the internal MCP server's resource handlers
         resources = await proxy.handle_list_resources()
         assert any(
-            r.uri == "token-sieve://stats" for r in resources
+            str(r.uri) == "token-sieve://stats" for r in resources
         )
 
         content = await proxy.handle_read_resource("token-sieve://stats")

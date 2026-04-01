@@ -147,11 +147,64 @@ async def _run_proxy(config_path: str | None = None) -> int:
     return 0
 
 
+def _run_stats() -> int:
+    """Print metrics dashboard from metrics.json file."""
+    import json
+    import os
+
+    metrics_path = os.environ.get(
+        "TOKEN_SIEVE_METRICS_PATH",
+        os.path.expanduser("~/.token-sieve/metrics.json"),
+    )
+
+    if not Path(metrics_path).exists():
+        print(
+            f"Error: no metrics file found at {metrics_path}",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        data = json.loads(Path(metrics_path).read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        print(f"Error: failed to read metrics: {exc}", file=sys.stderr)
+        return 1
+
+    summary = data.get("session_summary", {})
+    breakdown = data.get("strategy_breakdown", {})
+
+    print("=== Token Sieve Session Stats ===")
+    print(f"  Events:     {summary.get('event_count', 0)}")
+    print(f"  Original:   {summary.get('total_original_tokens', 0)} tokens")
+    print(f"  Compressed: {summary.get('total_compressed_tokens', 0)} tokens")
+    ratio = summary.get("total_savings_ratio", 0)
+    print(f"  Savings:    {ratio:.1%}")
+    print()
+
+    if breakdown:
+        print("=== Per-Strategy Breakdown ===")
+        print(f"  {'Strategy':<30} {'Count':>6} {'Original':>10} {'Compressed':>10}")
+        print(f"  {'-' * 30} {'-' * 6} {'-' * 10} {'-' * 10}")
+        for name, stats in sorted(breakdown.items()):
+            print(
+                f"  {name:<30} {stats['count']:>6} "
+                f"{stats['total_original_tokens']:>10} "
+                f"{stats['total_compressed_tokens']:>10}"
+            )
+
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point: parse args, dispatch to proxy or pipe mode.
+    """CLI entry point: parse args, dispatch to proxy, pipe, or stats mode.
 
     Returns 0 on success, 1 on error.
     """
+    # Check for stats subcommand before argparse (avoids positional conflict)
+    effective_argv = argv if argv is not None else sys.argv[1:]
+    if effective_argv and effective_argv[0] == "stats":
+        return _run_stats()
+
     parser = argparse.ArgumentParser(
         prog="token-sieve",
         description="MCP compression proxy that reduces token usage",
