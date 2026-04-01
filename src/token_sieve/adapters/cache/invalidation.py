@@ -51,6 +51,14 @@ class WriteThruInvalidator:
         self._observers.append(observer)
 
     def invalidate_for(self, tool_name: str) -> None:
-        """Notify all registered observers about a mutating tool call."""
+        """Notify all registered observers about a mutating tool call.
+
+        Uses global invalidation (invalidate_all) when available, since a
+        mutation to any resource may affect cached reads from other tools.
+        Falls back to per-tool invalidation for observers without invalidate_all.
+        """
         for observer in self._observers:
-            observer.invalidate(tool_name)
+            if hasattr(observer, "invalidate_all"):
+                observer.invalidate_all()
+            else:
+                observer.invalidate(tool_name)

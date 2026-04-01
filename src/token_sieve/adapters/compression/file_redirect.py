@@ -11,6 +11,7 @@ Satisfies CompressionStrategy protocol structurally.
 from __future__ import annotations
 
 import dataclasses
+import os
 import tempfile
 
 from token_sieve.domain.counters import CharEstimateCounter
@@ -21,6 +22,7 @@ class FileRedirectStrategy:
     """Write oversized results to temp files, return pointer envelope.
 
     Satisfies CompressionStrategy protocol structurally.
+    Tracks created files and provides cleanup() for removal.
 
     Args:
         threshold_tokens: Token count above which content is redirected (default 10000).
@@ -35,6 +37,7 @@ class FileRedirectStrategy:
         self.threshold_tokens = threshold_tokens
         self._output_dir = output_dir
         self._counter = CharEstimateCounter()
+        self._created_files: list[str] = []
 
     def can_handle(self, envelope: ContentEnvelope) -> bool:
         """Return True when content exceeds the token threshold."""
@@ -59,5 +62,15 @@ class FileRedirectStrategy:
         finally:
             f.close()
 
+        self._created_files.append(f.name)
         pointer = f"Result written to {f.name}, {byte_count} bytes"
         return dataclasses.replace(envelope, content=pointer)
+
+    def cleanup(self) -> None:
+        """Remove all temp files created by this strategy instance."""
+        for path in self._created_files:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        self._created_files.clear()

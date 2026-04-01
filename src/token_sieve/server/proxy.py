@@ -51,6 +51,16 @@ class ProxyServer:
         self._schema_cache = schema_cache
         self._server = self._build_mcp_server()
 
+    def rebind_connector(self, connector: Any) -> None:
+        """Replace the backend connector and update SchemaCache provider.
+
+        Called by _run_proxy after the real backend session is established.
+        """
+        self._connector = connector
+        if self._schema_cache is not None:
+            self._schema_cache._provider = connector
+            self._schema_cache.invalidate()
+
     def _build_mcp_server(self) -> Server:
         """Create the low-level MCP Server with handlers wired to self."""
         server = Server("token-sieve")
@@ -149,6 +159,13 @@ class ProxyServer:
         for item in result.content:
             if isinstance(item, types.TextContent):
                 has_text = True
+
+                # Guard: empty text passes through unchanged (ContentEnvelope
+                # rejects empty content, and there's nothing to compress)
+                if not item.text:
+                    compressed_content.append(item)
+                    continue
+
                 envelope = ContentEnvelope(
                     content=item.text,
                     content_type=ContentType.TEXT,

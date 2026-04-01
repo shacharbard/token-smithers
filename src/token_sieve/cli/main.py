@@ -142,7 +142,7 @@ async def _run_proxy(config_path: str | None = None) -> int:
         env=config.backend.env or None,
     )
     async with transport.connect() as session:
-        proxy._connector = BackendConnector(session)
+        proxy.rebind_connector(BackendConnector(session))
         await proxy.run()
     return 0
 

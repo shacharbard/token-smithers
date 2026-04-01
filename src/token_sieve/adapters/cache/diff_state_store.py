@@ -57,6 +57,14 @@ class DiffStateStore:
         for key in keys:
             self._store.pop(key, None)
 
+    def invalidate_all(self) -> None:
+        """Remove ALL stored entries regardless of tool name.
+
+        Used for global invalidation on mutating calls.
+        """
+        self._store.clear()
+        self._tool_keys.clear()
+
     @staticmethod
     def _make_key(tool_name: str, args: dict[str, Any] | None) -> str:
         """Compute deterministic store key from tool name + args."""

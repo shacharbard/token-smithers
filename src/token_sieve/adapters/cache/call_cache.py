@@ -62,6 +62,15 @@ class IdempotentCallCache:
         for key in keys:
             self._cache.pop(key, None)
 
+    def invalidate_all(self) -> None:
+        """Remove ALL cached entries regardless of tool name.
+
+        Used for global invalidation on mutating calls -- a write to
+        any resource may affect cached reads from other tools.
+        """
+        self._cache.clear()
+        self._tool_keys.clear()
+
     @staticmethod
     def _make_key(tool_name: str, args: dict[str, Any] | None) -> str:
         """Compute deterministic cache key from tool name + args."""

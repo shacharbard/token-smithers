@@ -32,16 +32,16 @@ class ToonCompressor:
         return parsed is not None
 
     def compress(self, envelope: ContentEnvelope) -> ContentEnvelope:
-        """Convert uniform JSON array to pipe-separated columnar format."""
+        """Convert uniform JSON array to tab-separated columnar format."""
         parsed = self._try_parse_uniform_array(envelope.content)
         if parsed is None:
             return envelope
 
         keys, rows = parsed
-        lines = ["|".join(keys)]
+        lines = ["\t".join(keys)]
         for row in rows:
             values = [self._format_value(row[k]) for k in keys]
-            lines.append("|".join(values))
+            lines.append("\t".join(values))
 
         new_metadata = dict(envelope.metadata)
         new_metadata["transformed_by"] = "toon_compressor"

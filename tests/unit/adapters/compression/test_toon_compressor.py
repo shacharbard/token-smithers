@@ -89,7 +89,7 @@ class TestToonCompressorSpecific:
         assert strategy.can_handle(envelope) is False
 
     def test_compress_produces_columnar_format(self, strategy, make_envelope):
-        """Uniform JSON array is converted to pipe-separated columnar format."""
+        """Uniform JSON array is converted to tab-separated columnar format."""
         data = json.dumps([
             {"name": "foo", "size": 100},
             {"name": "bar", "size": 200},
@@ -98,9 +98,9 @@ class TestToonCompressorSpecific:
         result = strategy.compress(envelope)
 
         lines = result.content.strip().split("\n")
-        assert lines[0] == "name|size"  # header row with keys
-        assert lines[1] == "foo|100"
-        assert lines[2] == "bar|200"
+        assert lines[0] == "name\tsize"  # header row with keys
+        assert lines[1] == "foo\t100"
+        assert lines[2] == "bar\t200"
 
     def test_compress_sets_transformed_by_metadata(self, strategy, make_envelope):
         """compress() sets transformed_by='toon_compressor' in metadata."""
@@ -137,7 +137,7 @@ class TestToonCompressorSpecific:
         result = strategy.compress(envelope)
 
         lines = result.content.strip().split("\n")
-        assert lines[0] == "name|info"
+        assert lines[0] == "name\tinfo"
         # Nested objects become compact JSON strings
         assert "foo" in lines[1]
         assert '{"a": 1}' in lines[1]
@@ -152,7 +152,7 @@ class TestToonCompressorSpecific:
         result = strategy.compress(envelope)
 
         lines = result.content.strip().split("\n")
-        assert "None" in lines[1] or "null" in lines[1] or lines[1].endswith("|")
+        assert "None" in lines[1] or "null" in lines[1] or lines[1].endswith("\t")
 
     def test_compress_large_array_achieves_40_percent_savings(self, strategy, make_envelope):
         """10+ row uniform array achieves at least 40% size reduction."""
@@ -189,12 +189,12 @@ class TestToonCompressorSpecific:
         result = strategy.compress(envelope)
 
         lines = result.content.strip().split("\n")
-        assert lines[0] == "name|active"
+        assert lines[0] == "name\tactive"
         assert "True" in lines[1]
         assert "False" in lines[2]
 
     def test_compress_handles_pipe_in_values(self, strategy, make_envelope):
-        """Values containing pipe characters must be escaped to avoid ambiguity."""
+        """Tab delimiter avoids ambiguity from pipe characters in values."""
         data = json.dumps([
             {"cmd": "echo foo | grep bar", "exit": 0},
             {"cmd": "ls -la", "exit": 0},
@@ -205,10 +205,12 @@ class TestToonCompressorSpecific:
         assert len(lines) == 3  # header + 2 rows
 
         # Each row must have the same number of columns as the header
-        header_cols = lines[0].split("|")
+        header_cols = lines[0].split("\t")
         for i, line in enumerate(lines[1:]):
-            row_cols = line.split("|")
+            row_cols = line.split("\t")
             assert len(row_cols) == len(header_cols), (
                 f"Row {i} has {len(row_cols)} columns but header has "
-                f"{len(header_cols)}. Pipe in value not escaped."
+                f"{len(header_cols)}. Delimiter collision in value."
             )
+        # Verify the pipe character is preserved in the value
+        assert "echo foo | grep bar" in lines[1]

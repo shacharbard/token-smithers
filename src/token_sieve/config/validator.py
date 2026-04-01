@@ -16,16 +16,16 @@ CLEANUP = frozenset({
 })
 
 CONTENT_SPECIFIC = frozenset({
-    "log_filter",
-    "error_compressor",
-    "comment_stripper",
+    "log_level_filter",
+    "error_stack_compressor",
+    "code_comment_stripper",
 })
 
 FORMAT = frozenset({
-    "toon",
+    "toon_compressor",
     "yaml_transcoder",
     "sentence_scorer",
-    "rle",
+    "rle_encoder",
 })
 
 SAFETY_NET = frozenset({

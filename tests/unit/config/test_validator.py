@@ -26,9 +26,9 @@ class TestValidateAdapterOrder:
             "null_field_elider",
             "path_prefix_deduplicator",
             "timestamp_normalizer",
-            "log_filter",
-            "error_compressor",
-            "toon",
+            "log_level_filter",
+            "error_stack_compressor",
+            "toon_compressor",
             "truncation",
         ])
         assert warnings == []
@@ -36,7 +36,7 @@ class TestValidateAdapterOrder:
     def test_cleanup_after_content_specific_warns(self, validate):
         """Cleanup adapter after content-specific should produce a warning."""
         warnings = validate([
-            "log_filter",
+            "log_level_filter",
             "whitespace_normalizer",
         ])
         assert len(warnings) >= 1
@@ -88,8 +88,8 @@ class TestValidateAdapterOrder:
     def test_format_before_content_specific_warns(self, validate):
         """Format transform before content-specific adapter should warn."""
         warnings = validate([
-            "toon",
-            "log_filter",
+            "toon_compressor",
+            "log_level_filter",
         ])
         assert len(warnings) >= 1
 
