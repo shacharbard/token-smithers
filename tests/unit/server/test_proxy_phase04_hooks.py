@@ -260,6 +260,45 @@ class TestMetricsCollectorIntegration:
         collector.record.assert_called_once_with(event)
 
 
+class TestMCPResourceDashboard:
+    """MCP resource token-sieve://stats returns metrics JSON."""
+
+    @pytest.mark.asyncio
+    async def test_mcp_resource_returns_stats_json(self) -> None:
+        """list_resources includes token-sieve://stats, read_resource returns JSON."""
+        from token_sieve.domain.metrics import InMemoryMetricsCollector
+
+        collector = InMemoryMetricsCollector()
+        collector.record(
+            CompressionEvent(
+                original_tokens=100,
+                compressed_tokens=40,
+                strategy_name="test",
+                content_type=ContentType.TEXT,
+            )
+        )
+
+        proxy = ProxyServer(
+            backend_connector=_make_fake_connector(),
+            tool_filter=_make_fake_filter(),
+            pipeline=_make_fake_pipeline(),
+            metrics_sink=_make_fake_sink(),
+            metrics_collector=collector,
+        )
+
+        # Access the internal MCP server's resource handlers
+        resources = await proxy.handle_list_resources()
+        assert any(
+            r.uri == "token-sieve://stats" for r in resources
+        )
+
+        content = await proxy.handle_read_resource("token-sieve://stats")
+        import json
+
+        data = json.loads(content)
+        assert data["session_summary"]["event_count"] == 1
+
+
 class TestAdapterRegistryPhase04:
     """Phase 04 adapters are in the adapter registry."""
 
