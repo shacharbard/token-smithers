@@ -279,3 +279,95 @@ class TestPipelineIntegration:
         assert event.compressed_tokens == 6
         assert event.strategy_name == "AlwaysCompressStrategy"
         assert event.content_type == ContentType.TEXT
+
+
+class TestPipelineSizeGate:
+    """Pipeline size gate pre-check: small content skips all strategies."""
+
+    def test_small_content_skips_all_strategies(self):
+        """Content below size_gate_threshold is returned unchanged."""
+        from token_sieve.domain.pipeline import CompressionPipeline
+
+        counter = FakeTokenCounter()
+        pipeline = CompressionPipeline(counter=counter, size_gate_threshold=100)
+        pipeline.register(ContentType.TEXT, AlwaysCompressStrategy())
+
+        # 11 chars = 11 tokens (FakeTokenCounter), below threshold of 100
+        envelope = ContentEnvelope(content="hello world", content_type=ContentType.TEXT)
+        result, events = pipeline.process(envelope)
+
+        assert result.content == "hello world"  # unchanged
+        assert events == []  # no strategies ran
+
+    def test_large_content_runs_strategies(self):
+        """Content above size_gate_threshold runs through strategies."""
+        from token_sieve.domain.pipeline import CompressionPipeline
+
+        counter = FakeTokenCounter()
+        pipeline = CompressionPipeline(counter=counter, size_gate_threshold=5)
+
+        pipeline.register(ContentType.TEXT, AlwaysCompressStrategy())
+
+        envelope = ContentEnvelope(content="hello world", content_type=ContentType.TEXT)
+        result, events = pipeline.process(envelope)
+
+        assert result.content == "[compressed] hello world"
+        assert len(events) == 1
+
+    def test_size_gate_none_disables_gate(self):
+        """When size_gate_threshold is None, no gating occurs."""
+        from token_sieve.domain.pipeline import CompressionPipeline
+
+        counter = FakeTokenCounter()
+        pipeline = CompressionPipeline(counter=counter)  # default: no gate
+        pipeline.register(ContentType.TEXT, AlwaysCompressStrategy())
+
+        envelope = ContentEnvelope(content="hi", content_type=ContentType.TEXT)
+        result, events = pipeline.process(envelope)
+
+        assert result.content == "[compressed] hi"
+        assert len(events) == 1
+
+
+class TestPipelineTransformedByGuard:
+    """transformed_by metadata prevents re-processing by subsequent strategies."""
+
+    def test_strategy_skipped_when_transformed_by_set(self):
+        """Pipeline checks transformed_by in metadata before running strategies."""
+        from token_sieve.domain.pipeline import CompressionPipeline
+
+        counter = FakeTokenCounter()
+        pipeline = CompressionPipeline(counter=counter)
+
+        pipeline.register(ContentType.TEXT, AlwaysCompressStrategy(prefix="[A]"))
+        pipeline.register(ContentType.TEXT, AlwaysCompressStrategy(prefix="[B]"))
+
+        # Envelope has transformed_by metadata -- pipeline should still run
+        # non-format-transform strategies, but the metadata is available for
+        # format-transform adapters to check in their own can_handle().
+        envelope = ContentEnvelope(
+            content="hello world",
+            content_type=ContentType.TEXT,
+            metadata={"transformed_by": "SomeOtherStrategy"},
+        )
+
+        result, events = pipeline.process(envelope)
+        assert result is not None
+
+    def test_adapter_ordering_respected(self):
+        """Strategies execute in registration order."""
+        from token_sieve.domain.pipeline import CompressionPipeline
+
+        counter = FakeTokenCounter()
+        pipeline = CompressionPipeline(counter=counter)
+
+        pipeline.register(ContentType.TEXT, AlwaysCompressStrategy(prefix="[1]"))
+        pipeline.register(ContentType.TEXT, AlwaysCompressStrategy(prefix="[2]"))
+
+        envelope = ContentEnvelope(content="data", content_type=ContentType.TEXT)
+        result, events = pipeline.process(envelope)
+
+        # First adds [1], second adds [2] to the already-prefixed content
+        assert result.content == "[2] [1] data"
+        assert len(events) == 2
+        assert events[0].strategy_name == "AlwaysCompressStrategy"

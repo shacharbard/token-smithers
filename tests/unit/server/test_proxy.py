@@ -286,3 +286,79 @@ class TestCreateFromConfig:
         config = TokenSieveConfig()
         proxy = ProxyServer.create_from_config(config)
         assert isinstance(proxy, ProxyServer)
+
+    def test_create_from_config_wires_adapters_from_config(self) -> None:
+        """create_from_config() registers adapters from config list."""
+        from token_sieve.config.schema import AdapterConfig, TokenSieveConfig
+        from token_sieve.server.proxy import ProxyServer
+
+        config = TokenSieveConfig(
+            compression={
+                "adapters": [
+                    {"name": "whitespace_normalizer"},
+                    {"name": "smart_truncation"},
+                ],
+                "size_gate_threshold": 2000,
+            }
+        )
+        proxy = ProxyServer.create_from_config(config)
+        assert isinstance(proxy, ProxyServer)
+        # Pipeline should have strategies registered
+        pipeline = proxy._pipeline
+        text_chain = pipeline._routes.get(ContentType.TEXT, [])
+        assert len(text_chain) >= 2  # at least the 2 adapters we specified
+
+    def test_create_from_config_skips_disabled_adapter(self) -> None:
+        """Adapters with enabled=False are not registered in the pipeline."""
+        from token_sieve.config.schema import TokenSieveConfig
+        from token_sieve.server.proxy import ProxyServer
+
+        config = TokenSieveConfig(
+            compression={
+                "adapters": [
+                    {"name": "whitespace_normalizer", "enabled": True},
+                    {"name": "smart_truncation", "enabled": False},
+                ],
+            }
+        )
+        proxy = ProxyServer.create_from_config(config)
+        pipeline = proxy._pipeline
+        text_chain = pipeline._routes.get(ContentType.TEXT, [])
+        # Only whitespace_normalizer should be registered
+        names = [type(s).__name__ for s in text_chain]
+        assert "SmartTruncation" not in names
+        assert "WhitespaceNormalizer" in names
+
+    def test_create_from_config_uses_size_gate_threshold(self) -> None:
+        """size_gate_threshold from config is passed to pipeline."""
+        from token_sieve.config.schema import TokenSieveConfig
+        from token_sieve.server.proxy import ProxyServer
+
+        config = TokenSieveConfig(
+            compression={"size_gate_threshold": 5000}
+        )
+        proxy = ProxyServer.create_from_config(config)
+        assert proxy._pipeline._size_gate_threshold == 5000
+
+    def test_create_from_config_passes_adapter_settings(self) -> None:
+        """Per-adapter settings are forwarded to adapter constructors."""
+        from token_sieve.config.schema import TokenSieveConfig
+        from token_sieve.server.proxy import ProxyServer
+
+        config = TokenSieveConfig(
+            compression={
+                "adapters": [
+                    {
+                        "name": "smart_truncation",
+                        "settings": {"head_lines": 10, "tail_lines": 5},
+                    },
+                ],
+            }
+        )
+        proxy = ProxyServer.create_from_config(config)
+        pipeline = proxy._pipeline
+        text_chain = pipeline._routes.get(ContentType.TEXT, [])
+        smart_trunc = [s for s in text_chain if type(s).__name__ == "SmartTruncation"]
+        assert len(smart_trunc) == 1
+        assert smart_trunc[0].head_lines == 10
+        assert smart_trunc[0].tail_lines == 5
