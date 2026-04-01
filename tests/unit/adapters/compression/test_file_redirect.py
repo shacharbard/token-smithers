@@ -124,3 +124,50 @@ class TestFileRedirectSpecific:
         # Cleanup
         path = result.content.split("Result written to ")[1].split(",")[0]
         os.unlink(path)
+
+
+class TestFileRedirectCleanup:
+    """Finding 4 (P1): FileRedirectStrategy must track and clean up temp files."""
+
+    def test_cleanup_removes_created_files(self):
+        """cleanup() removes all temp files created by compress()."""
+        content = "data " * 200
+        envelope = ContentEnvelope(content=content, content_type=ContentType.TEXT)
+        strategy = FileRedirectStrategy(threshold_tokens=10)
+
+        result = strategy.compress(envelope)
+        path = result.content.split("Result written to ")[1].split(",")[0]
+        assert os.path.exists(path)
+
+        strategy.cleanup()
+        assert not os.path.exists(path)
+
+    def test_cleanup_tracks_multiple_files(self):
+        """cleanup() removes all files from multiple compress() calls."""
+        strategy = FileRedirectStrategy(threshold_tokens=10)
+        paths = []
+
+        for i in range(3):
+            content = f"data chunk {i} " * 200
+            envelope = ContentEnvelope(content=content, content_type=ContentType.TEXT)
+            result = strategy.compress(envelope)
+            path = result.content.split("Result written to ")[1].split(",")[0]
+            paths.append(path)
+
+        for p in paths:
+            assert os.path.exists(p)
+
+        strategy.cleanup()
+
+        for p in paths:
+            assert not os.path.exists(p)
+
+    def test_cleanup_idempotent(self):
+        """Calling cleanup() twice does not raise."""
+        content = "data " * 200
+        envelope = ContentEnvelope(content=content, content_type=ContentType.TEXT)
+        strategy = FileRedirectStrategy(threshold_tokens=10)
+
+        strategy.compress(envelope)
+        strategy.cleanup()
+        strategy.cleanup()  # Should not raise

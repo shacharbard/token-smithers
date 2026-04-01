@@ -582,3 +582,108 @@ class TestCreateFromConfigExtended:
         config = TokenSieveConfig()
         proxy = ProxyServer.create_from_config(config)
         assert proxy._invalidator is not None
+
+
+class TestSchemaCacheRebind:
+    """Finding 1 (P0): SchemaCache must use the live connector after rebind."""
+
+    @pytest.mark.anyio
+    async def test_schema_cache_reads_through_live_connector(self) -> None:
+        """After rebinding _connector, SchemaCache must use the new connector."""
+        from token_sieve.adapters.cache.schema_cache import SchemaCache
+        from token_sieve.server.proxy import ProxyServer
+
+        # Start with stub that returns empty
+        stub = _make_fake_connector(tools=[])
+        filt = _make_fake_filter(allowed=True)
+        pipeline = _make_fake_pipeline()
+        sink = _make_fake_sink()
+        schema_cache = SchemaCache(provider=stub, ttl_seconds=3600.0)
+
+        proxy = ProxyServer(
+            backend_connector=stub,
+            tool_filter=filt,
+            pipeline=pipeline,
+            metrics_sink=sink,
+            schema_cache=schema_cache,
+        )
+
+        # Simulate _run_proxy rebinding: replace connector with a live one
+        live_tools = [_make_tool("live_tool")]
+        live_connector = _make_fake_connector(tools=live_tools)
+        proxy.rebind_connector(live_connector)
+
+        result = await proxy.handle_list_tools()
+        assert len(result) == 1
+        assert result[0].name == "live_tool"
+
+
+class TestHandleCallToolEmptyText:
+    """Finding 3 (P1): Empty TextContent from backend must not crash."""
+
+    @pytest.mark.anyio
+    async def test_empty_text_content_passes_through(self) -> None:
+        """Backend returning empty text should pass through without error."""
+        from token_sieve.server.proxy import ProxyServer
+
+        empty_result = types.CallToolResult(
+            content=[types.TextContent(type="text", text="")],
+            isError=False,
+        )
+        connector = _make_fake_connector(call_result=empty_result)
+        filt = _make_fake_filter(allowed=True)
+        pipeline = _make_fake_pipeline()
+        sink = _make_fake_sink()
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=filt,
+            pipeline=pipeline,
+            metrics_sink=sink,
+        )
+
+        # Should not raise
+        result = await proxy.handle_call_tool("some_tool", {})
+        assert result.isError is False
+        assert len(result.content) == 1
+        assert result.content[0].text == ""
+
+
+class TestMutatingCallGlobalInvalidation:
+    """Finding 6: Mutating calls must invalidate ALL cached entries."""
+
+    @pytest.mark.anyio
+    async def test_mutating_call_invalidates_all_read_caches(self) -> None:
+        """A write_file call should invalidate unrelated read_file cache entries."""
+        from token_sieve.adapters.cache.call_cache import IdempotentCallCache
+        from token_sieve.adapters.cache.invalidation import WriteThruInvalidator
+        from token_sieve.server.proxy import ProxyServer
+
+        connector = _make_fake_connector(
+            call_result=_make_call_result("result data")
+        )
+        filt = _make_fake_filter(allowed=True)
+        pipeline = _make_fake_pipeline()
+        sink = _make_fake_sink()
+        cache = IdempotentCallCache(max_entries=100)
+        invalidator = WriteThruInvalidator()
+        invalidator.register_observer(cache)
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=filt,
+            pipeline=pipeline,
+            metrics_sink=sink,
+            call_cache=cache,
+            invalidator=invalidator,
+        )
+
+        # Cache a read_file result
+        await proxy.handle_call_tool("read_file", {"path": "/a.txt"})
+        assert cache.get("read_file", {"path": "/a.txt"}) is not None
+
+        # Now do a mutating call (write_file)
+        await proxy.handle_call_tool("write_file", {"path": "/b.txt"})
+
+        # The read_file cache entry should be invalidated (global invalidation)
+        assert cache.get("read_file", {"path": "/a.txt"}) is None

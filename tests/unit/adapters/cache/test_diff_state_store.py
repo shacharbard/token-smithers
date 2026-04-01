@@ -64,3 +64,27 @@ class TestInvalidation:
         store.store_result("read_file", {"path": "a"}, "cached")
         inv.invalidate_for("read_file")
         assert store.get_previous("read_file", {"path": "a"}) is None
+
+
+class TestGlobalInvalidation:
+    """Finding 6: DiffStateStore must support global invalidation."""
+
+    def test_invalidate_all_clears_entire_store(self) -> None:
+        """invalidate_all() clears every entry regardless of tool name."""
+        store = DiffStateStore()
+        store.store_result("read_file", {"path": "a"}, "r1")
+        store.store_result("list_items", {}, "r2")
+        store.invalidate_all()
+        assert store.get_previous("read_file", {"path": "a"}) is None
+        assert store.get_previous("list_items", {}) is None
+
+    def test_write_thru_global_invalidation(self) -> None:
+        """WriteThruInvalidator triggers global invalidation on mutating call."""
+        inv = WriteThruInvalidator()
+        store = DiffStateStore()
+        inv.register_observer(store)
+        store.store_result("read_file", {"path": "a"}, "cached_read")
+        store.store_result("list_items", {}, "cached_list")
+        inv.invalidate_for("write_file")
+        assert store.get_previous("read_file", {"path": "a"}) is None
+        assert store.get_previous("list_items", {}) is None

@@ -120,3 +120,30 @@ class TestBoundedSize:
     def test_default_max_entries_is_200(self) -> None:
         cache = IdempotentCallCache()
         assert cache._max_entries == 200
+
+
+class TestGlobalInvalidation:
+    """Finding 6: Mutating calls must invalidate ALL cached entries globally."""
+
+    def test_invalidate_all_clears_entire_cache(self) -> None:
+        """invalidate_all() clears every entry regardless of tool name."""
+        cache = IdempotentCallCache()
+        cache.put("read_file", {"path": "a"}, "r1")
+        cache.put("list_items", {}, "r2")
+        cache.put("search", {"q": "x"}, "r3")
+        cache.invalidate_all()
+        assert cache.get("read_file", {"path": "a"}) is None
+        assert cache.get("list_items", {}) is None
+        assert cache.get("search", {"q": "x"}) is None
+
+    def test_write_thru_global_invalidation(self) -> None:
+        """WriteThruInvalidator triggers global invalidation on mutating call."""
+        inv = WriteThruInvalidator()
+        cache = IdempotentCallCache()
+        inv.register_observer(cache)
+        cache.put("read_file", {"path": "a"}, "cached_read")
+        cache.put("list_items", {}, "cached_list")
+        # Mutating call to write_file should invalidate ALL entries
+        inv.invalidate_for("write_file")
+        assert cache.get("read_file", {"path": "a"}) is None
+        assert cache.get("list_items", {}) is None

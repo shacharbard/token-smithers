@@ -108,3 +108,49 @@ class TestValidateAdapterOrder:
         ])
         # Should have no truncation-position warning
         assert not any("truncation" in w.lower() and "last" in w.lower() for w in warnings)
+
+
+class TestValidatorMatchesRegistry:
+    """Finding 2 (P1): Validator names must match _ADAPTER_REGISTRY canonical names."""
+
+    def test_default_adapter_order_produces_no_warnings(self, validate):
+        """Default adapters from _default_adapters() should pass validation."""
+        from token_sieve.config.schema import _default_adapters
+
+        names = [a.name for a in _default_adapters()]
+        warnings = validate(names)
+        assert warnings == [], f"Unexpected warnings: {warnings}"
+
+    def test_canonical_names_recognized_by_validator(self, validate):
+        """All _ADAPTER_REGISTRY names must be recognized by the validator."""
+        from token_sieve.server.proxy import ProxyServer
+
+        for name in ProxyServer._ADAPTER_REGISTRY:
+            # Each registered name should not produce "unknown" warnings
+            # (validator silently accepts unknowns, but known names should
+            # be in the correct phase frozensets)
+            pass  # The real check is test_default_adapter_order_produces_no_warnings
+
+    def test_content_specific_contains_canonical_names(self):
+        """CONTENT_SPECIFIC frozenset must use canonical adapter names."""
+        from token_sieve.config.validator import CONTENT_SPECIFIC
+        from token_sieve.server.proxy import ProxyServer
+
+        registry = ProxyServer._ADAPTER_REGISTRY
+        for name in CONTENT_SPECIFIC:
+            assert name in registry, (
+                f"Validator name '{name}' not in _ADAPTER_REGISTRY. "
+                f"Did you mean one of: {list(registry.keys())}?"
+            )
+
+    def test_format_contains_canonical_names(self):
+        """FORMAT frozenset must use canonical adapter names."""
+        from token_sieve.config.validator import FORMAT
+        from token_sieve.server.proxy import ProxyServer
+
+        registry = ProxyServer._ADAPTER_REGISTRY
+        for name in FORMAT:
+            assert name in registry, (
+                f"Validator name '{name}' not in _ADAPTER_REGISTRY. "
+                f"Did you mean one of: {list(registry.keys())}?"
+            )

@@ -194,13 +194,21 @@ class TestToonCompressorSpecific:
         assert "False" in lines[2]
 
     def test_compress_handles_pipe_in_values(self, strategy, make_envelope):
-        """Values containing pipe characters are handled safely."""
+        """Values containing pipe characters must be escaped to avoid ambiguity."""
         data = json.dumps([
             {"cmd": "echo foo | grep bar", "exit": 0},
             {"cmd": "ls -la", "exit": 0},
         ])
         envelope = make_envelope(content=data, content_type=ContentType.JSON)
         result = strategy.compress(envelope)
-        # Should still be parseable -- content is produced, not empty
-        assert result.content
-        assert len(result.content.strip().split("\n")) == 3  # header + 2 rows
+        lines = result.content.strip().split("\n")
+        assert len(lines) == 3  # header + 2 rows
+
+        # Each row must have the same number of columns as the header
+        header_cols = lines[0].split("|")
+        for i, line in enumerate(lines[1:]):
+            row_cols = line.split("|")
+            assert len(row_cols) == len(header_cols), (
+                f"Row {i} has {len(row_cols)} columns but header has "
+                f"{len(header_cols)}. Pipe in value not escaped."
+            )

@@ -108,3 +108,27 @@ class TestCustomPatterns:
         inv = WriteThruInvalidator(mutating_patterns=set())
         assert inv.is_mutating("write_file") is False
         assert inv.is_mutating("delete_all") is False
+
+
+class TestGlobalInvalidation:
+    """Finding 6: invalidate_for must trigger global invalidation on observers."""
+
+    def test_invalidate_for_calls_invalidate_all_on_observers(self) -> None:
+        """invalidate_for() must call invalidate_all() (not invalidate(tool_name))."""
+
+        class _TrackingObserver:
+            def __init__(self) -> None:
+                self.invalidated_tools: list[str] = []
+                self.invalidate_all_called = False
+
+            def invalidate(self, tool_name: str) -> None:
+                self.invalidated_tools.append(tool_name)
+
+            def invalidate_all(self) -> None:
+                self.invalidate_all_called = True
+
+        inv = WriteThruInvalidator()
+        obs = _TrackingObserver()
+        inv.register_observer(obs)
+        inv.invalidate_for("write_file")
+        assert obs.invalidate_all_called is True
