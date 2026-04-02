@@ -55,6 +55,7 @@ class ProxyServer:
         learning_store: Any | None = None,
         semantic_cache: Any | None = None,
         metrics_collector: Any | None = None,
+        metrics_writer: Any | None = None,
     ) -> None:
         self._connector = backend_connector
         self._filter = tool_filter
@@ -69,6 +70,7 @@ class ProxyServer:
         self._learning_store_failures: int = 0
         self._semantic_cache = semantic_cache
         self._metrics_collector = metrics_collector
+        self._metrics_writer = metrics_writer
         self._server = self._build_mcp_server()
 
     def rebind_connector(self, connector: Any) -> None:
@@ -414,8 +416,11 @@ class ProxyServer:
         if self._learning_store is not None:
             await self._record_to_learning_store(name, events_for_learning)
 
-        # Record to metrics collector
-        if self._metrics_collector is not None:
+        # Record to metrics collector (via writer if available, else direct)
+        if self._metrics_writer is not None:
+            for event in events_for_learning:
+                self._metrics_writer.record_and_maybe_flush(event)
+        elif self._metrics_collector is not None:
             for event in events_for_learning:
                 self._metrics_collector.record(event)
 
@@ -632,12 +637,23 @@ class ProxyServer:
             # F1: Register semantic cache as invalidation observer
             invalidator.register_observer(semantic_cache)
 
-        # Phase 04: Dashboard / metrics collector
+        # Phase 04: Dashboard / metrics collector + file writer
         from token_sieve.domain.metrics import InMemoryMetricsCollector
 
         metrics_collector = None
+        metrics_writer = None
         if config.dashboard.enabled:
+            import os
+
             metrics_collector = InMemoryMetricsCollector()
+
+            from token_sieve.server.metrics_writer import MetricsFileWriter
+
+            expanded_path = os.path.expanduser(config.dashboard.metrics_file_path)
+            metrics_writer = MetricsFileWriter(
+                collector=metrics_collector,
+                metrics_path=expanded_path,
+            )
 
         proxy = cls(
             backend_connector=stub_connector,
@@ -652,6 +668,7 @@ class ProxyServer:
             learning_store=learning_store,
             semantic_cache=semantic_cache,
             metrics_collector=metrics_collector,
+            metrics_writer=metrics_writer,
         )
 
         # Self-tuning interval (calls between threshold adjustments)

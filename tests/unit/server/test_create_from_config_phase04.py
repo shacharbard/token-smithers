@@ -63,6 +63,25 @@ class TestCreateFromConfigPhase04:
 
         proxy = ProxyServer.create_from_config(config)
         assert proxy._metrics_collector is not None
+        assert proxy._metrics_writer is not None
+
+    def test_metrics_writer_none_when_dashboard_disabled(self) -> None:
+        """MetricsFileWriter is None when dashboard.enabled=False."""
+        config = TokenSieveConfig(
+            dashboard={"enabled": False},
+        )
+
+        proxy = ProxyServer.create_from_config(config)
+        assert proxy._metrics_writer is None
+
+    def test_metrics_writer_expands_home_path(self) -> None:
+        """MetricsFileWriter expands ~ in metrics_file_path."""
+        config = TokenSieveConfig(
+            dashboard={"enabled": True, "metrics_file_path": "~/.token-sieve/metrics.json"},
+        )
+
+        proxy = ProxyServer.create_from_config(config)
+        assert "~" not in proxy._metrics_writer._metrics_path
 
 
 class TestSelfTuning:

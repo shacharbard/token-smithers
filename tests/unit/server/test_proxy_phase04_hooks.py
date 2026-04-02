@@ -259,6 +259,36 @@ class TestMetricsCollectorIntegration:
         await proxy.handle_call_tool("read_file", {"path": "/foo"})
         collector.record.assert_called_once_with(event)
 
+    @pytest.mark.asyncio
+    async def test_metrics_writer_record_and_flush_called(self) -> None:
+        """When metrics_writer is set, record_and_maybe_flush is called instead of direct record."""
+        event = CompressionEvent(
+            original_tokens=200,
+            compressed_tokens=80,
+            strategy_name="null_elider",
+            content_type=ContentType.TEXT,
+        )
+        connector = _make_fake_connector(
+            call_result=_make_call_result("data " * 50)
+        )
+        collector = MagicMock()
+        writer = MagicMock()
+        writer.record_and_maybe_flush = MagicMock()
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=_make_fake_filter(),
+            pipeline=_make_fake_pipeline(events=[event]),
+            metrics_sink=_make_fake_sink(),
+            metrics_collector=collector,
+            metrics_writer=writer,
+        )
+
+        await proxy.handle_call_tool("read_file", {"path": "/foo"})
+        writer.record_and_maybe_flush.assert_called_once_with(event)
+        # Direct collector.record should NOT be called when writer is present
+        collector.record.assert_not_called()
+
 
 class TestMCPResourceDashboard:
     """MCP resource token-sieve://stats returns metrics JSON."""
