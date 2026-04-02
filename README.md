@@ -111,7 +111,7 @@ pipx install "Token Smithers[learning,prose]"
 <summary>Install from source (for contributors)</summary>
 
 ```bash
-git clone https://github.com/shaharbard/token-smithers.git
+git clone https://github.com/shacharbard/token-smithers.git
 cd token-smithers
 pip install -e ".[dev]"
 ```
