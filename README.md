@@ -63,41 +63,71 @@ The only non-trivial cost is the semantic cache fuzzy lookup (SequenceMatcher on
 
 ## Installation
 
+**Recommended** — install with `pipx` (isolated, no venv needed):
+
 ```bash
-# Clone and install
+pipx install token-sieve[learning]
+```
+
+Or with `pip`:
+
+```bash
+pip install token-sieve[learning]
+```
+
+That's it. The `token-sieve` command is now available globally.
+
+The `learning` extra includes cross-session learning and semantic caching. For the full feature set:
+
+```bash
+# Recommended: all features
+pipx install "token-sieve[learning,prose]"
+```
+
+<details>
+<summary>Optional extras explained</summary>
+
+| Extra | What it adds | Install command |
+|-------|-------------|----------------|
+| `learning` | Cross-session learning, semantic cache (aiosqlite) | `pip install token-sieve[learning]` |
+| `prose` | Prose/documentation summarization via TextRank (sumy) | `pip install token-sieve[prose]` |
+| Both | All features | `pip install "token-sieve[learning,prose]"` |
+
+**Core dependencies** (always installed):
+
+| Package | Purpose |
+|---------|---------|
+| `mcp>=1.0.0` | MCP protocol (server + client) |
+| `pyyaml>=6.0` | Config file parsing |
+| `pydantic>=2.0` | Config validation |
+
+</details>
+
+<details>
+<summary>Install from source (for contributors)</summary>
+
+```bash
 git clone https://github.com/yourusername/token-sieve.git
 cd token-sieve
-pip install -e ".[learning]"
+pip install -e ".[dev]"
 ```
 
-The `learning` extra installs `aiosqlite` for cross-session learning and semantic caching. Without it, those features are disabled.
+</details>
 
-Optional extras:
+## Quick Start
+
+Three commands to get running:
 
 ```bash
-# For prose/documentation summarization (TextRank via sumy)
-pip install -e ".[prose]"
-
-# For development (tests, coverage)
-pip install -e ".[dev]"
-
-# All extras
-pip install -e ".[learning,prose]"
+pipx install token-sieve[learning]    # 1. Install
+token-sieve setup                      # 2. Pick which MCP servers to compress
+# ... use Claude Code normally ...
+token-sieve stats                      # 3. Check your savings
 ```
 
-### Dependencies
+### Automatic setup
 
-| Package | Purpose | Required? |
-|---------|---------|-----------|
-| `mcp>=1.0.0` | MCP protocol (server + client) | Yes |
-| `pyyaml>=6.0` | Config file parsing | Yes |
-| `pydantic>=2.0` | Config validation | Yes |
-| `aiosqlite>=0.20.0` | Cross-session learning, semantic cache | Optional (`learning` extra) |
-| `sumy>=0.12.0` | Prose summarization (TextRank) | Optional (`prose` extra) |
-
-## Quick Start (Automatic Setup)
-
-The fastest way to get started. The setup command finds your existing MCP servers and lets you choose which ones to compress.
+The setup command finds your existing MCP servers and lets you choose which ones to compress.
 
 ```bash
 token-sieve setup
