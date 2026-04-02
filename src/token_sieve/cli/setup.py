@@ -25,7 +25,8 @@ class McpServerEntry:
     @property
     def is_wrapped(self) -> bool:
         """True if this server is already wrapped by token-sieve."""
-        return self.command in ("token-sieve", "token-smithers")
+        cmd = Path(self.command).name if self.command else ""
+        return cmd in ("token-sieve", "token-smithers")
 
 
 @dataclass
@@ -227,6 +228,11 @@ def wrap_servers(
     wrapped: list[str] = []
     server_map = {s.name: s for s in config_file.servers}
 
+    # Resolve full path to token-smithers binary (avoids pyenv/venv shim issues)
+    import shutil
+
+    ts_bin = shutil.which("token-smithers") or "token-smithers"
+
     for name in server_names:
         server = server_map.get(name)
         if server is None or server.is_wrapped:
@@ -236,15 +242,15 @@ def wrap_servers(
         yaml_path = configs_path / f"{name}.yaml"
         yaml_path.write_text(generate_sieve_config(server))
 
-        # Update raw_data
+        # Update raw_data — use full binary path for cross-project compatibility
         yaml_abs = str(yaml_path.resolve())
         config_file.raw_data["mcpServers"][name] = {
-            "command": "token-smithers",
+            "command": ts_bin,
             "args": ["--config", yaml_abs],
         }
 
         # Update server entry
-        server.command = "token-smithers"
+        server.command = ts_bin
         server.args = ["--config", yaml_abs]
 
         wrapped.append(name)

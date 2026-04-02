@@ -186,7 +186,8 @@ class TestWrapServers:
 
         assert set(wrapped) == {"a", "c"}
         # Verify JSON structure updated
-        assert raw["mcpServers"]["a"]["command"] == "token-smithers"
+        # Command should be a full path or "token-smithers"
+        assert Path(raw["mcpServers"]["a"]["command"]).name == "token-smithers"
         assert raw["mcpServers"]["a"]["args"] == [
             "--config",
             str(tmp_path / "configs" / "a.yaml"),
