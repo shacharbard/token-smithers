@@ -608,9 +608,33 @@ pytest -m benchmark
 
 ### Test stats
 
-- 933+ tests
+- 950+ tests
 - 91.8% coverage
 - Unit / Integration / E2E / Contract / Golden file test pyramid
+
+## Security
+
+Token Smithers runs locally on your machine. It never sends data to external services.
+
+| Measure | Detail |
+|---------|--------|
+| **Config parsing** | `yaml.safe_load` only — no code execution via YAML |
+| **SQL queries** | Parameterized throughout — no SQL injection |
+| **Temp files** | Created with `0o600` permissions — owner-only access |
+| **Cache safety** | Semantic cache restricted to read-only tools via allowlist — mutating tools never cached |
+| **Fault isolation** | Learning store fails open — I/O errors don't crash tool calls |
+| **No eval/exec** | All compression is pure string/JSON manipulation |
+| **Dependency audit** | 0 vulnerabilities in direct dependencies (mcp, pyyaml, pydantic, aiosqlite) |
+| **Static analysis** | bandit: 0 medium/high findings on 5,235 lines of code |
+
+See [SECURITY.md](SECURITY.md) for the full trust model, vulnerability reporting, and audit details.
+
+```bash
+# Run security checks yourself
+pip install bandit pip-audit
+bandit -r src/token_sieve/ -ll    # Static analysis
+pip-audit                          # Dependency vulnerabilities
+```
 
 ## License
 
