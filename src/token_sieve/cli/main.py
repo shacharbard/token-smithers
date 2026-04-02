@@ -301,7 +301,7 @@ def _run_status_line() -> int:
     # ANSI colors
     GREEN = "\033[32m"
     BLUE = "\033[34m"
-    RED = "\033[31m"
+    ORANGE = "\033[38;5;214m"
     DIM = "\033[2m"
     RESET = "\033[0m"
 
@@ -315,7 +315,7 @@ def _run_status_line() -> int:
     elif cum_pct >= 20:
         color = BLUE
     else:
-        color = RED
+        color = ORANGE
 
     cum_str = f"{_format_tokens(cum_saved)} ({cum_pct}%)"
     day_str = f"{_format_tokens(day_saved)} ({day_pct}%)"
