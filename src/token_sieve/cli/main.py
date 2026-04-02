@@ -299,8 +299,8 @@ def _run_status_line() -> int:
     cum_saved, cum_pct, day_saved, day_pct = _query_learning_db()
 
     # ANSI colors
-    GREEN = "\033[32m"
-    BLUE = "\033[34m"
+    GREEN = "\033[92m"
+    BLUE = "\033[94m"
     ORANGE = "\033[38;5;214m"
     DIM = "\033[2m"
     RESET = "\033[0m"
