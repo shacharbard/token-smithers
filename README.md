@@ -636,6 +636,13 @@ bandit -r src/token_sieve/ -ll    # Static analysis
 pip-audit                          # Dependency vulnerabilities
 ```
 
+## Acknowledgements
+
+Token Smithers was inspired by and builds on ideas from:
+
+- **[DietMCP](https://github.com/austindixson/dietmcp)** — Pioneered the DietMCP one-liner notation (`tool(param, ?opt) desc`) for schema compression and type elision. Token Smithers' Tier 3 schema virtualization implements this notation with frequency-aware tier selection.
+- **[AnythingLLM](https://github.com/Mintplex-Labs/anything-llm)** ([toolReranker.js](https://github.com/Mintplex-Labs/anything-llm/blob/master/server/utils/agents/aibitat/utils/toolReranker.js)) — Inspired the statistical tool reranking approach. Token Smithers adapts this concept for MCP proxy-level reranking with cross-session persistence via SQLite.
+
 ## License
 
 MIT
