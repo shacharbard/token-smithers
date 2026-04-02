@@ -238,6 +238,46 @@ def _run_stats() -> int:
     return 0
 
 
+def _run_status_line() -> int:
+    """Print a one-liner for status bar integration."""
+    import json
+    import os
+
+    metrics_path = os.environ.get(
+        "TOKEN_SIEVE_METRICS_PATH",
+        os.path.expanduser("~/.token-sieve/metrics.json"),
+    )
+
+    if not Path(metrics_path).exists():
+        print("Smithers: awaiting first call...")
+        return 0
+
+    try:
+        data = json.loads(Path(metrics_path).read_text())
+    except (json.JSONDecodeError, OSError):
+        print("Smithers: metrics unavailable")
+        return 0
+
+    summary = data.get("session_summary", {})
+    ratio = summary.get("total_savings_ratio", 0)
+    original = summary.get("total_original_tokens", 0)
+    compressed = summary.get("total_compressed_tokens", 0)
+    saved = original - compressed
+
+    if saved == 0:
+        print("Smithers: no savings yet")
+    elif ratio >= 0.4:
+        print(f"Smithers saved {saved:,} tokens ({ratio:.0%}) | Excellent...")
+    elif ratio >= 0.2:
+        print(f"Smithers saved {saved:,} tokens ({ratio:.0%}) | Very good.")
+    elif ratio > 0:
+        print(f"Smithers saved {saved:,} tokens ({ratio:.0%}) | Barely adequate.")
+    else:
+        print(f"Smithers: {saved:,} tokens | Unacceptable.")
+
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point: parse args, dispatch to proxy, pipe, or stats mode.
 
@@ -247,6 +287,9 @@ def main(argv: list[str] | None = None) -> int:
     effective_argv = argv if argv is not None else sys.argv[1:]
     if effective_argv and effective_argv[0] == "stats":
         return _run_stats()
+
+    if effective_argv and effective_argv[0] == "status-line":
+        return _run_status_line()
 
     if effective_argv and effective_argv[0] == "setup":
         from token_sieve.cli.setup import run_setup

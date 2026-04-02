@@ -209,6 +209,41 @@ token-smithers stats
   smart_truncation                    12      42000      28700
 ```
 
+### Status line
+
+See live token savings in your terminal status bar:
+
+```bash
+token-smithers status-line
+```
+
+```
+Smithers saved 127,800 tokens (45%) | Excellent...
+```
+
+**Claude Code** — add to your settings (`~/.claude/settings.json`):
+
+```json
+{
+  "statusLine": "token-smithers status-line"
+}
+```
+
+**Terminal prompt** — add to your `.zshrc` or `.bashrc`:
+
+```bash
+# Show Smithers savings in your prompt
+export PS1='$(token-smithers status-line) \$ '
+```
+
+**tmux status bar:**
+
+```bash
+set -g status-right '#(token-smithers status-line)'
+```
+
+The status line updates automatically as the metrics file is written during your session.
+
 ## Manual Setup
 
 If you prefer to configure Token Smithers by hand instead of using `token-smithers setup`, here's how.
