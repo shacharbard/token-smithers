@@ -271,14 +271,22 @@ def _run_status_line() -> int:
     DIM = "\033[2m"
     RESET = "\033[0m"
 
+    # Format number: 1200 → 1.2K, 1500000 → 1.5M
+    if saved >= 1_000_000:
+        short = f"{saved / 1_000_000:.1f}M"
+    elif saved >= 1_000:
+        short = f"{saved / 1_000:.1f}K"
+    else:
+        short = str(saved)
+
     if saved == 0:
         print(f"{DIM}Smithers: 0{RESET}")
     elif ratio >= 0.4:
-        print(f"{GREEN}Smithers: {saved:,} ({ratio:.0%}){RESET}")
+        print(f"{GREEN}Smithers: {short} ({ratio:.0%}){RESET}")
     elif ratio >= 0.2:
-        print(f"{BLUE}Smithers: {saved:,} ({ratio:.0%}){RESET}")
+        print(f"{BLUE}Smithers: {short} ({ratio:.0%}){RESET}")
     else:
-        print(f"{RED}Smithers: {saved:,} ({ratio:.0%}){RESET}")
+        print(f"{RED}Smithers: {short} ({ratio:.0%}){RESET}")
 
     return 0
 

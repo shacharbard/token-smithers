@@ -218,9 +218,9 @@ token-smithers status-line
 ```
 
 ```
-Smithers: 127,800 (45%)        # green when >= 40%
-Smithers: 52,000 (23%)         # blue when >= 20%
-Smithers: 8,200 (6%)           # red when < 20%
+Smithers: 127.8K (45%)         # green when >= 40%
+Smithers: 52.0K (23%)          # blue when >= 20%
+Smithers: 8.2K (6%)            # red when < 20%
 ```
 
 **Claude Code** — add to your settings (`~/.claude/settings.json`):
