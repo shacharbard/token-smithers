@@ -13,6 +13,8 @@ Like any good assistant, Smithers does the dirty work silently — and reports b
 **Works with any MCP client** — Claude Code, Codex, Cursor, Windsurf, Cline, or anything that speaks the MCP protocol. Not tied to any specific tool.
 
 > **Note:** Token Smithers currently supports **stdio MCP servers** (servers launched as a subprocess). HTTP/remote MCP servers (e.g., servers connected via URL) are not yet supported. Most MCP servers use stdio — check your config for `"type": "stdio"` or `"command"` entries.
+>
+> **Single-instance servers:** Some MCP servers lock their database and only allow one running instance (e.g., MuninnDB). Since Token Smithers spawns the backend as a subprocess, these servers will fail if another instance is already running. Leave single-instance servers unwrapped.
 
 ## Which MCP Servers Should I Wrap?
 
