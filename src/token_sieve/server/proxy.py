@@ -204,9 +204,13 @@ class ProxyServer:
             normalize_args,
         )
 
+        # F4: Run TTL eviction before lookup
+        await self._semantic_cache.evict_expired()
+
         args_normalized = normalize_args(arguments)
+        # F3: Use configured threshold instead of hardcoded 0.85
         hit = await self._semantic_cache.lookup_similar(
-            name, args_normalized, threshold=0.85
+            name, args_normalized, threshold=self._semantic_cache.similarity_threshold
         )
         if hit is not None:
             return types.CallToolResult(
@@ -222,35 +226,48 @@ class ProxyServer:
         result: types.CallToolResult,
     ) -> None:
         """Store a result in the semantic cache."""
-        from token_sieve.adapters.cache.param_normalizer import (
-            compute_args_hash,
-            normalize_args,
-        )
+        try:
+            from token_sieve.adapters.cache.param_normalizer import (
+                compute_args_hash,
+                normalize_args,
+            )
 
-        # Only cache text results
-        texts = [
-            item.text
-            for item in result.content
-            if isinstance(item, types.TextContent) and item.text
-        ]
-        if not texts:
-            return
-        combined = "\n".join(texts)
-        args_normalized = normalize_args(arguments)
-        args_hash = compute_args_hash(arguments)
-        await self._semantic_cache.cache_result(
-            name, args_normalized, args_hash, combined
-        )
+            # Only cache text results
+            texts = [
+                item.text
+                for item in result.content
+                if isinstance(item, types.TextContent) and item.text
+            ]
+            if not texts:
+                return
+            combined = "\n".join(texts)
+            args_normalized = normalize_args(arguments)
+            args_hash = compute_args_hash(arguments)
+            await self._semantic_cache.cache_result(
+                name, args_normalized, args_hash, combined
+            )
+        except Exception as exc:
+            print(
+                f"Warning: semantic cache store failed: {exc}",
+                file=__import__("sys").stderr,
+            )
 
     async def _record_to_learning_store(
         self, name: str, events: list[Any]
     ) -> None:
         """Record tool call and compression events to learning store."""
-        await self._learning_store.record_call(name, "default")
-        for event in events:
-            await self._learning_store.record_compression_event(
-                "session", event, name
+        try:
+            await self._learning_store.record_call(name, "default")
+            for event in events:
+                await self._learning_store.record_compression_event(
+                    "session", event, name
+                )
+        except Exception as exc:
+            print(
+                f"Warning: learning store I/O failed, disabling: {exc}",
+                file=__import__("sys").stderr,
             )
+            self._learning_store = None
 
     async def handle_call_tool(
         self, name: str, arguments: dict[str, Any]
@@ -279,7 +296,11 @@ class ProxyServer:
             )
 
         # Short-circuit: check semantic cache before exact-match cache
-        if self._semantic_cache is not None:
+        # F1: Skip semantic cache for mutating tool calls
+        is_mutating = (
+            self._invalidator is not None and self._invalidator.is_mutating(name)
+        )
+        if self._semantic_cache is not None and not is_mutating:
             sem_result = await self._check_semantic_cache(name, arguments)
             if sem_result is not None:
                 if self._reranker is not None:
@@ -373,12 +394,15 @@ class ProxyServer:
 
     async def run(self) -> None:
         """Start the MCP server on stdio transport."""
-        async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-            await self._server.run(
-                read_stream,
-                write_stream,
-                self._server.create_initialization_options(),
-            )
+        try:
+            async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
+                await self._server.run(
+                    read_stream,
+                    write_stream,
+                    self._server.create_initialization_options(),
+                )
+        finally:
+            self._pipeline.cleanup()
 
     # Adapter name -> (module_path, class_name) registry
     _ADAPTER_REGISTRY: dict[str, tuple[str, str]] = {
@@ -572,6 +596,8 @@ class ProxyServer:
                 ttl_seconds=config.semantic_cache.ttl_seconds or 86400,
                 similarity_threshold=config.semantic_cache.similarity_threshold,
             )
+            # F1: Register semantic cache as invalidation observer
+            invalidator.register_observer(semantic_cache)
 
         # Phase 04: Dashboard / metrics collector
         from token_sieve.domain.metrics import InMemoryMetricsCollector
@@ -692,6 +718,15 @@ class _DeferredSemanticCache:
         self._ttl_seconds = ttl_seconds
         self._similarity_threshold = similarity_threshold
         self._cache: Any = None
+
+    @property
+    def similarity_threshold(self) -> float:
+        """Return the configured similarity threshold."""
+        return self._similarity_threshold
+
+    def invalidate_all(self) -> None:
+        """Clear the underlying cache (InvalidationObserver protocol)."""
+        self._cache = None
 
     async def _ensure_initialized(self) -> Any:
         if self._cache is None:

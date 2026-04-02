@@ -53,11 +53,7 @@ def _normalize_value(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(k): _normalize_value(v) for k, v in sorted(value.items())}
     if isinstance(value, list):
-        normalized = [_normalize_value(item) for item in value]
-        # Sort string lists for determinism
-        if all(isinstance(item, str) for item in normalized):
-            normalized.sort()
-        return normalized
+        return [_normalize_value(item) for item in value]
     # int, float, bool -- pass through
     return value
 

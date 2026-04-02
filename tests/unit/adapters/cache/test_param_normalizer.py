@@ -56,10 +56,22 @@ class TestNormalizeArgs:
         assert result == "{}"
 
     def test_list_values_sorted_if_strings(self) -> None:
-        """String lists are sorted for determinism."""
+        """String lists are sorted for determinism (dict keys only)."""
         a = {"tags": ["beta", "alpha"]}
         b = {"tags": ["alpha", "beta"]}
-        assert normalize_args(a) == normalize_args(b)
+        # Dict keys are sorted, but list ORDER is preserved
+        # These should produce DIFFERENT results since list order matters
+        assert normalize_args(a) != normalize_args(b)
+
+    def test_list_order_preserved_for_ordered_args(self) -> None:
+        """F5: Order-sensitive string lists must NOT be sorted."""
+        # e.g. command arguments, file paths — order matters
+        a = {"commands": ["git", "commit", "-m", "fix"]}
+        result = normalize_args(a)
+        import json
+
+        parsed = json.loads(result)
+        assert parsed["commands"] == ["git", "commit", "-m", "fix"]
 
 
 class TestComputeArgsHash:

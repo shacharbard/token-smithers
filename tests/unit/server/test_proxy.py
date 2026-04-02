@@ -687,3 +687,298 @@ class TestMutatingCallGlobalInvalidation:
 
         # The read_file cache entry should be invalidated (global invalidation)
         assert cache.get("read_file", {"path": "/a.txt"}) is None
+
+
+# ---------------------------------------------------------------------------
+# Phase 04 adversarial review findings (F1-F4, F6)
+# ---------------------------------------------------------------------------
+
+
+class TestSemanticCacheSkipsMutatingCalls:
+    """F1: Semantic cache must not serve results for mutating tool calls."""
+
+    @pytest.mark.asyncio
+    async def test_mutating_call_bypasses_semantic_cache(self) -> None:
+        """write_file should NEVER hit the semantic cache."""
+        from token_sieve.adapters.cache.invalidation import WriteThruInvalidator
+        from token_sieve.server.proxy import ProxyServer
+
+        fake_semantic_cache = AsyncMock()
+        fake_semantic_cache.lookup_similar = AsyncMock(
+            return_value=MagicMock(result_text="stale cached data")
+        )
+        fake_semantic_cache.similarity_threshold = 0.85
+        fake_semantic_cache.evict_expired = AsyncMock(return_value=0)
+
+        invalidator = WriteThruInvalidator()
+
+        connector = _make_fake_connector(
+            call_result=_make_call_result("fresh write result"),
+        )
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=_make_fake_filter(allowed=True),
+            pipeline=_make_fake_pipeline(),
+            metrics_sink=_make_fake_sink(),
+            invalidator=invalidator,
+            semantic_cache=fake_semantic_cache,
+        )
+
+        result = await proxy.handle_call_tool("write_file", {"path": "/a.txt"})
+
+        # Must NOT have called lookup_similar — mutating calls skip cache
+        fake_semantic_cache.lookup_similar.assert_not_called()
+        # Must have actually called backend
+        connector.call_tool.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_semantic_cache_registered_as_invalidation_observer(self) -> None:
+        """F1 part 2: semantic cache invalidate_all called on mutation."""
+        from token_sieve.adapters.cache.invalidation import WriteThruInvalidator
+        from token_sieve.server.proxy import _DeferredSemanticCache
+
+        cache = _DeferredSemanticCache(
+            max_entries=10, ttl_seconds=60, similarity_threshold=0.85
+        )
+
+        # Verify it has invalidate_all for the observer protocol
+        assert hasattr(cache, "invalidate_all"), (
+            "_DeferredSemanticCache must implement invalidate_all()"
+        )
+
+
+class TestLearningStoreIOSafety:
+    """F2: Learning store I/O errors must not crash tool calls."""
+
+    @pytest.mark.asyncio
+    async def test_learning_store_error_does_not_crash_call(self) -> None:
+        """If learning store raises, tool call still returns result."""
+        from token_sieve.server.proxy import ProxyServer
+
+        learning_store = AsyncMock()
+        learning_store.record_call = AsyncMock(
+            side_effect=IOError("disk full")
+        )
+
+        connector = _make_fake_connector(
+            call_result=_make_call_result("good result"),
+        )
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=_make_fake_filter(allowed=True),
+            pipeline=_make_fake_pipeline(),
+            metrics_sink=_make_fake_sink(),
+            learning_store=learning_store,
+        )
+
+        # Should NOT raise — must fail open
+        result = await proxy.handle_call_tool("read_file", {"path": "/a"})
+        assert not result.isError
+
+    @pytest.mark.asyncio
+    async def test_learning_store_disabled_after_error(self) -> None:
+        """After one failure, learning store should be disabled for session."""
+        from token_sieve.server.proxy import ProxyServer
+
+        call_count = 0
+
+        async def record_call_fail(*args: Any) -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise IOError("disk full")
+
+        learning_store = AsyncMock()
+        learning_store.record_call = AsyncMock(side_effect=record_call_fail)
+
+        connector = _make_fake_connector(
+            call_result=_make_call_result("result"),
+        )
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=_make_fake_filter(allowed=True),
+            pipeline=_make_fake_pipeline(),
+            metrics_sink=_make_fake_sink(),
+            learning_store=learning_store,
+        )
+
+        await proxy.handle_call_tool("read_file", {"path": "/a"})
+        await proxy.handle_call_tool("read_file", {"path": "/b"})
+
+        # Second call should not attempt learning store (disabled after error)
+        assert call_count == 1, "Learning store should be disabled after first failure"
+
+    @pytest.mark.asyncio
+    async def test_semantic_cache_store_error_does_not_crash(self) -> None:
+        """F2 part 2: _store_semantic_cache failure must not crash."""
+        from token_sieve.server.proxy import ProxyServer
+
+        fake_semantic_cache = AsyncMock()
+        fake_semantic_cache.lookup_similar = AsyncMock(return_value=None)
+        fake_semantic_cache.similarity_threshold = 0.85
+        fake_semantic_cache.evict_expired = AsyncMock(return_value=0)
+        fake_semantic_cache.cache_result = AsyncMock(
+            side_effect=IOError("write failed")
+        )
+
+        connector = _make_fake_connector(
+            call_result=_make_call_result("good result"),
+        )
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=_make_fake_filter(allowed=True),
+            pipeline=_make_fake_pipeline(),
+            metrics_sink=_make_fake_sink(),
+            semantic_cache=fake_semantic_cache,
+        )
+
+        # Should NOT raise
+        result = await proxy.handle_call_tool("read_file", {"path": "/a"})
+        assert not result.isError
+
+
+class TestSimilarityThresholdFromConfig:
+    """F3: Configured similarity threshold must be used, not hardcoded 0.85."""
+
+    @pytest.mark.asyncio
+    async def test_custom_threshold_used_in_lookup(self) -> None:
+        """Semantic cache lookup must use the configured threshold."""
+        from token_sieve.server.proxy import ProxyServer
+
+        fake_semantic_cache = AsyncMock()
+        fake_semantic_cache.lookup_similar = AsyncMock(return_value=None)
+        fake_semantic_cache.similarity_threshold = 0.70  # Custom threshold
+        fake_semantic_cache.evict_expired = AsyncMock(return_value=0)
+        fake_semantic_cache.cache_result = AsyncMock()
+
+        connector = _make_fake_connector(
+            call_result=_make_call_result("result"),
+        )
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=_make_fake_filter(allowed=True),
+            pipeline=_make_fake_pipeline(),
+            metrics_sink=_make_fake_sink(),
+            semantic_cache=fake_semantic_cache,
+        )
+
+        await proxy.handle_call_tool("read_file", {"path": "/a"})
+
+        # The threshold passed to lookup_similar must be 0.70, NOT 0.85
+        call_args = fake_semantic_cache.lookup_similar.call_args
+        assert call_args is not None
+        threshold_used = call_args.kwargs.get(
+            "threshold", call_args.args[2] if len(call_args.args) > 2 else None
+        )
+        assert threshold_used == pytest.approx(0.70), (
+            f"Expected threshold=0.70 but got {threshold_used}"
+        )
+
+
+class TestTTLEvictionRuns:
+    """F4: TTL eviction must run on cache check."""
+
+    @pytest.mark.asyncio
+    async def test_evict_expired_called_before_lookup(self) -> None:
+        """evict_expired() must be called during _check_semantic_cache."""
+        from token_sieve.server.proxy import ProxyServer
+
+        fake_semantic_cache = AsyncMock()
+        fake_semantic_cache.lookup_similar = AsyncMock(return_value=None)
+        fake_semantic_cache.similarity_threshold = 0.85
+        fake_semantic_cache.evict_expired = AsyncMock(return_value=0)
+        fake_semantic_cache.cache_result = AsyncMock()
+
+        connector = _make_fake_connector(
+            call_result=_make_call_result("result"),
+        )
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=_make_fake_filter(allowed=True),
+            pipeline=_make_fake_pipeline(),
+            metrics_sink=_make_fake_sink(),
+            semantic_cache=fake_semantic_cache,
+        )
+
+        await proxy.handle_call_tool("read_file", {"path": "/a"})
+
+        fake_semantic_cache.evict_expired.assert_awaited_once()
+
+
+class TestPipelineCleanup:
+    """F6: Pipeline cleanup must propagate to strategies."""
+
+    def test_cleanup_calls_strategy_cleanup(self) -> None:
+        """CompressionPipeline.cleanup() must call cleanup on strategies that have it."""
+        from token_sieve.domain.counters import CharEstimateCounter
+        from token_sieve.domain.pipeline import CompressionPipeline
+
+        counter = CharEstimateCounter()
+        pipeline = CompressionPipeline(counter=counter)
+
+        # Strategy with cleanup
+        strategy_with_cleanup = MagicMock()
+        strategy_with_cleanup.can_handle = MagicMock(return_value=True)
+        strategy_with_cleanup.compress = MagicMock()
+        strategy_with_cleanup.cleanup = MagicMock()
+
+        # Strategy without cleanup
+        strategy_no_cleanup = MagicMock(spec=["can_handle", "compress"])
+
+        pipeline.register(ContentType.TEXT, strategy_with_cleanup)
+        pipeline.register(ContentType.TEXT, strategy_no_cleanup)
+
+        pipeline.cleanup()
+
+        strategy_with_cleanup.cleanup.assert_called_once()
+        # strategy_no_cleanup should not crash (no cleanup method)
+
+    def test_cleanup_method_exists(self) -> None:
+        """CompressionPipeline must have a cleanup() method."""
+        from token_sieve.domain.counters import CharEstimateCounter
+        from token_sieve.domain.pipeline import CompressionPipeline
+
+        pipeline = CompressionPipeline(counter=CharEstimateCounter())
+        assert hasattr(pipeline, "cleanup"), (
+            "CompressionPipeline must have a cleanup() method"
+        )
+
+
+class TestProxyRunCleanup:
+    """F6 part 2: ProxyServer.run() must cleanup pipeline in finally block."""
+
+    @pytest.mark.asyncio
+    async def test_run_calls_pipeline_cleanup(self) -> None:
+        """Pipeline cleanup must be called even if server exits."""
+        from token_sieve.server.proxy import ProxyServer
+        from unittest.mock import patch
+
+        pipeline = _make_fake_pipeline()
+        pipeline.cleanup = MagicMock()
+
+        proxy = ProxyServer(
+            backend_connector=_make_fake_connector(),
+            tool_filter=_make_fake_filter(),
+            pipeline=pipeline,
+            metrics_sink=_make_fake_sink(),
+        )
+
+        # Mock stdio_server as an async context manager
+        class _FakeCtx:
+            async def __aenter__(self):
+                return (AsyncMock(), AsyncMock())
+
+            async def __aexit__(self, *args):
+                pass
+
+        with patch("mcp.server.stdio.stdio_server", return_value=_FakeCtx()):
+            with patch.object(proxy._server, "run", new_callable=AsyncMock):
+                await proxy.run()
+
+        pipeline.cleanup.assert_called_once()

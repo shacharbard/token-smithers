@@ -102,3 +102,10 @@ class CompressionPipeline:
             envelope = compressed_envelope
 
         return envelope, events
+
+    def cleanup(self) -> None:
+        """Clean up resources held by registered strategies."""
+        for chain in self._routes.values():
+            for strategy in chain:
+                if hasattr(strategy, "cleanup"):
+                    strategy.cleanup()
