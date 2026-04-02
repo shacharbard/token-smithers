@@ -224,6 +224,12 @@ def main(argv: list[str] | None = None) -> int:
     if effective_argv and effective_argv[0] == "stats":
         return _run_stats()
 
+    if effective_argv and effective_argv[0] == "setup":
+        from token_sieve.cli.setup import run_setup
+
+        undo = "--undo" in effective_argv
+        return run_setup(undo=undo)
+
     parser = argparse.ArgumentParser(
         prog="token-sieve",
         description="MCP compression proxy that reduces token usage",
