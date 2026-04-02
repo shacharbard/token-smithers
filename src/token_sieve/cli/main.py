@@ -264,16 +264,21 @@ def _run_status_line() -> int:
     compressed = summary.get("total_compressed_tokens", 0)
     saved = original - compressed
 
+    # ANSI colors
+    GREEN = "\033[32m"
+    BLUE = "\033[34m"
+    RED = "\033[31m"
+    DIM = "\033[2m"
+    RESET = "\033[0m"
+
     if saved == 0:
-        print("Smithers: no savings yet")
+        print(f"{DIM}Smithers: 0{RESET}")
     elif ratio >= 0.4:
-        print(f"Smithers saved {saved:,} tokens ({ratio:.0%}) | Excellent...")
+        print(f"{GREEN}Smithers: {saved:,} ({ratio:.0%}){RESET}")
     elif ratio >= 0.2:
-        print(f"Smithers saved {saved:,} tokens ({ratio:.0%}) | Very good.")
-    elif ratio > 0:
-        print(f"Smithers saved {saved:,} tokens ({ratio:.0%}) | Barely adequate.")
+        print(f"{BLUE}Smithers: {saved:,} ({ratio:.0%}){RESET}")
     else:
-        print(f"Smithers: {saved:,} tokens | Unacceptable.")
+        print(f"{RED}Smithers: {saved:,} ({ratio:.0%}){RESET}")
 
     return 0
 

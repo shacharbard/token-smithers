@@ -218,7 +218,9 @@ token-smithers status-line
 ```
 
 ```
-Smithers saved 127,800 tokens (45%) | Excellent...
+Smithers: 127,800 (45%)        # green when >= 40%
+Smithers: 52,000 (23%)         # blue when >= 20%
+Smithers: 8,200 (6%)           # red when < 20%
 ```
 
 **Claude Code** — add to your settings (`~/.claude/settings.json`):
