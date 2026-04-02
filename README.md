@@ -64,29 +64,46 @@ Token Smithers wraps **one server at a time**. You choose which ones benefit fro
 6. **Response**: Compressed result returned to Claude Code
 7. **Learning**: Usage stats and compression events recorded for cross-session optimization
 
-## Performance Overhead
+## Benchmarks
 
-Token Smithers adds negligible latency. The compression pipeline is pure Python string and JSON operations — no ML inference, no GPU, no network calls.
+Measured across 12 content types at 3 sizes each, through the full 11-adapter pipeline. **Total: 192K tokens in, 73K out — 62% saved.**
 
-**Measured pipeline latency (full 11-adapter chain):**
+| Content Type | Small | Medium | Large | Key Strategies |
+|-------------|------:|-------:|------:|---------------|
+| JSON array (file listing) | 45% | 46% | 46% | NullFieldElider, PathDedup |
+| JSON API response (PRs) | 24% | 25% | 25% | NullFieldElider, TimestampNormalizer |
+| JSON nested config | 27% | 27% | 27% | NullFieldElider, WhitespaceNormalizer |
+| JSON repeated keys | 21% | 22% | 22% | KeyAliasing, NullFieldElider |
+| Python source code | 58% | **84%** | **95%** | ASTSkeletonExtractor |
+| Log output | 20% | **72%** | **94%** | TimestampNormalizer, SmartTruncation |
+| Error stack traces | 10% | 32% | **77%** | PathDedup, SmartTruncation |
+| Dependency graph | 34% | **69%** | **89%** | GraphAdjacencyEncoder, YamlTranscoder |
+| Git diff output | 0% | **68%** | **89%** | PathDedup, SmartTruncation |
+| Markdown documentation | 14% | **74%** | **91%** | SmartTruncation |
+| CSV/tabular data | 0% | **66%** | **93%** | SmartTruncation |
+| XML configuration | 47% | **82%** | **93%** | NullFieldElider, SmartTruncation |
 
-| Content type | Input size | Pipeline time | Compression |
-|-------------|-----------|--------------|-------------|
-| Small JSON object | 29 chars | 0.06ms | 28% smaller |
-| JSON array (50 items) | 5.7 KB | 0.23ms | 47% smaller |
-| JSON array (200 items) | 31 KB | 0.99ms | 58% smaller |
-| Python source file | 2.8 KB | 0.37ms | 58% smaller |
-| Dependency graph | 162 chars | 0.13ms | 2% smaller |
+Pipeline latency: **0.05 - 11ms** depending on content size. A typical MCP tool call takes 50-500ms, so Token Smithers adds **less than 1% overhead**.
 
-A typical MCP tool call (filesystem read, API request, database query) takes **50-500ms** for the backend to respond. Token Smithers's compression pipeline runs in **under 1ms** even for large results — adding less than 1% to the total round-trip time.
+<details>
+<summary>Why so fast</summary>
 
-**Why so fast:**
-- All compression is string manipulation, regex, and JSON parse/serialize — no heavy computation
-- Content-aware routing skips adapters that can't handle the content type (`can_handle` check)
+- Pure string manipulation, regex, and JSON parse/serialize — no ML, no GPU
+- Content-aware routing skips irrelevant adapters
 - Small results (<2000 tokens) skip the pipeline entirely via the size gate
-- No network calls — everything runs in-process between Claude Code and your backend
+- No network calls — everything runs in-process
+- Semantic cache fuzzy lookup adds 1-5ms when enabled; exact-match is O(1)
 
-The only non-trivial cost is the semantic cache fuzzy lookup (SequenceMatcher on up to 100 cached entries), which adds 1-5ms when enabled. Exact-match cache hits are O(1).
+</details>
+
+<details>
+<summary>Reproduce these benchmarks</summary>
+
+```bash
+python scripts/benchmark_all.py
+```
+
+</details>
 
 ## Requirements
 
