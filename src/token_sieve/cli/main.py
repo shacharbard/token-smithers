@@ -192,16 +192,39 @@ def _run_stats() -> int:
     summary = data.get("session_summary", {})
     breakdown = data.get("strategy_breakdown", {})
 
-    print("=== Token Sieve Session Stats ===")
-    print(f"  Events:     {summary.get('event_count', 0)}")
-    print(f"  Original:   {summary.get('total_original_tokens', 0)} tokens")
-    print(f"  Compressed: {summary.get('total_compressed_tokens', 0)} tokens")
     ratio = summary.get("total_savings_ratio", 0)
-    print(f"  Savings:    {ratio:.1%}")
+    original = summary.get("total_original_tokens", 0)
+    compressed = summary.get("total_compressed_tokens", 0)
+    saved = original - compressed
+
+    # Burns personality based on savings
+    if ratio >= 0.4:
+        quote = '"Excellent..."'
+        comment = f"Smithers, we saved {saved:,} tokens. Not a single one squandered."
+    elif ratio >= 0.2:
+        quote = '"Very good, Smithers."'
+        comment = f"{saved:,} tokens saved. Acceptable, but I expect more next session."
+    elif ratio > 0:
+        quote = '"Smithers, this is barely adequate."'
+        comment = f"Only {saved:,} tokens saved. We can do better. Enable more adapters."
+    else:
+        quote = '"Smithers, this is unacceptable."'
+        comment = "No savings recorded. Check your configuration."
+
+    print()
+    print(f"  {quote}")
+    print()
+    print("  === Token Smithers — Session Stats ===")
+    print(f"  Events:     {summary.get('event_count', 0)}")
+    print(f"  Original:   {original:,} tokens")
+    print(f"  Compressed: {compressed:,} tokens")
+    print(f"  Saved:      {saved:,} tokens ({ratio:.1%})")
+    print()
+    print(f"  {comment}")
     print()
 
     if breakdown:
-        print("=== Per-Strategy Breakdown ===")
+        print("  === Per-Strategy Breakdown ===")
         print(f"  {'Strategy':<30} {'Count':>6} {'Original':>10} {'Compressed':>10}")
         print(f"  {'-' * 30} {'-' * 6} {'-' * 10} {'-' * 10}")
         for name, stats in sorted(breakdown.items()):
@@ -210,6 +233,7 @@ def _run_stats() -> int:
                 f"{stats['total_original_tokens']:>10} "
                 f"{stats['total_compressed_tokens']:>10}"
             )
+        print()
 
     return 0
 
@@ -231,8 +255,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_setup(undo=undo)
 
     parser = argparse.ArgumentParser(
-        prog="token-sieve",
-        description="MCP compression proxy that reduces token usage",
+        prog="token-smithers",
+        description="Token Smithers — your loyal assistant for token efficiency",
     )
     parser.add_argument(
         "--pipe",

@@ -25,7 +25,7 @@ class McpServerEntry:
     @property
     def is_wrapped(self) -> bool:
         """True if this server is already wrapped by token-sieve."""
-        return self.command == "token-sieve"
+        return self.command in ("token-sieve", "token-smithers")
 
 
 @dataclass
@@ -159,12 +159,12 @@ def wrap_servers(
         # Update raw_data
         yaml_abs = str(yaml_path.resolve())
         config_file.raw_data["mcpServers"][name] = {
-            "command": "token-sieve",
+            "command": "token-smithers",
             "args": ["--config", yaml_abs],
         }
 
         # Update server entry
-        server.command = "token-sieve"
+        server.command = "token-smithers"
         server.args = ["--config", yaml_abs]
 
         wrapped.append(name)
@@ -297,6 +297,9 @@ def _run_undo(configs: list[McpConfigFile], configs_dir: str) -> int:
         return 0
 
     print(f"Unwrapped {len(total_unwrapped)} server(s): {', '.join(total_unwrapped)}")
+    print()
+    print('  "Smithers, you\'re fired." — Token compression disabled.')
+    print("  Your MCP servers are back to their original configuration.")
     return 0
 
 
@@ -370,4 +373,7 @@ def _run_wrap(configs: list[McpConfigFile], configs_dir: str) -> int:
 
     print(f"\nWrapped {len(total_wrapped)} server(s): {', '.join(total_wrapped)}")
     print(f"Configs written to: {configs_dir}")
+    print()
+    print('  "Release the hounds!" — Token compression is now active.')
+    print("  Use Claude Code normally. Check savings with: token-smithers stats")
     return 0

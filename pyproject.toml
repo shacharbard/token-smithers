@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "token-sieve"
+name = "token-smithers"
 version = "0.1.0"
-description = "MCP compression gateway that reduces token usage"
+description = "Your loyal assistant for token efficiency. Excellent..."
 requires-python = ">=3.11"
 license = "MIT"
 dependencies = [
@@ -30,6 +30,7 @@ dev = [
 ]
 
 [project.scripts]
+token-smithers = "token_sieve.cli.main:main"
 token-sieve = "token_sieve.cli.main:main"
 
 [tool.hatch.build.targets.wheel]

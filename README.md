@@ -1,12 +1,14 @@
-# token-sieve
+# Token Smithers
 
-MCP compression gateway that sits between Claude Code and your backend MCP servers, transparently reducing token usage by compressing tool schemas and results.
+*"Your context window is a fortune. Stop squandering it."*
 
 ```
-Claude Code  <-->  token-sieve (proxy)  <-->  Backend MCP Server
+Claude Code  <-->  Token Smithers (proxy)  <-->  Backend MCP Server
 ```
 
-token-sieve intercepts MCP traffic and applies a multi-stage compression pipeline — cleanup, content-aware compression, schema virtualization, deduplication, and caching — to reduce the tokens consumed by tool interactions. No changes to Claude Code or your backend servers required.
+Your loyal assistant for token efficiency. Token Smithers sits between Claude Code and your backend MCP servers, transparently compressing tool schemas and results to reduce token usage. No changes to Claude Code or your backend servers required.
+
+Like any good assistant, Smithers does the dirty work silently — and reports back with style.
 
 ## What It Does
 
@@ -24,7 +26,7 @@ token-sieve intercepts MCP traffic and applies a multi-stage compression pipelin
 
 ## How It Works
 
-1. **Claude Code calls a tool** via MCP → token-sieve receives the request
+1. **Claude Code calls a tool** via MCP → Token Smithers receives the request
 2. **Safety check**: Mutating tools (write, delete, create) always go to backend — never cached
 3. **Cache check**: Read-only tools checked against semantic cache for similar prior results
 4. **Backend call**: Request forwarded to your backend MCP server
@@ -34,7 +36,7 @@ token-sieve intercepts MCP traffic and applies a multi-stage compression pipelin
 
 ## Performance Overhead
 
-token-sieve adds negligible latency. The compression pipeline is pure Python string and JSON operations — no ML inference, no GPU, no network calls.
+Token Smithers adds negligible latency. The compression pipeline is pure Python string and JSON operations — no ML inference, no GPU, no network calls.
 
 **Measured pipeline latency (full 11-adapter chain):**
 
@@ -46,7 +48,7 @@ token-sieve adds negligible latency. The compression pipeline is pure Python str
 | Python source file | 2.8 KB | 0.37ms | 58% smaller |
 | Dependency graph | 162 chars | 0.13ms | 2% smaller |
 
-A typical MCP tool call (filesystem read, API request, database query) takes **50-500ms** for the backend to respond. token-sieve's compression pipeline runs in **under 1ms** even for large results — adding less than 1% to the total round-trip time.
+A typical MCP tool call (filesystem read, API request, database query) takes **50-500ms** for the backend to respond. Token Smithers's compression pipeline runs in **under 1ms** even for large results — adding less than 1% to the total round-trip time.
 
 **Why so fast:**
 - All compression is string manipulation, regex, and JSON parse/serialize — no heavy computation
@@ -59,29 +61,29 @@ The only non-trivial cost is the semantic cache fuzzy lookup (SequenceMatcher on
 ## Requirements
 
 - **Python 3.11+**
-- **A backend MCP server** — any MCP-compatible server that token-sieve will proxy to (e.g., filesystem, GitHub, database, or custom servers)
+- **A backend MCP server** — any MCP-compatible server that Token Smithers will proxy to (e.g., filesystem, GitHub, database, or custom servers)
 
 ## Installation
 
 **Recommended** — install with `pipx` (isolated, no venv needed):
 
 ```bash
-pipx install token-sieve[learning]
+pipx install token-smithers[learning]
 ```
 
 Or with `pip`:
 
 ```bash
-pip install token-sieve[learning]
+pip install token-smithers[learning]
 ```
 
-That's it. The `token-sieve` command is now available globally.
+That's it. The `token-smithers` command is now available globally.
 
 The `learning` extra includes cross-session learning and semantic caching. For the full feature set:
 
 ```bash
 # Recommended: all features
-pipx install "token-sieve[learning,prose]"
+pipx install "Token Smithers[learning,prose]"
 ```
 
 <details>
@@ -89,9 +91,9 @@ pipx install "token-sieve[learning,prose]"
 
 | Extra | What it adds | Install command |
 |-------|-------------|----------------|
-| `learning` | Cross-session learning, semantic cache (aiosqlite) | `pip install token-sieve[learning]` |
-| `prose` | Prose/documentation summarization via TextRank (sumy) | `pip install token-sieve[prose]` |
-| Both | All features | `pip install "token-sieve[learning,prose]"` |
+| `learning` | Cross-session learning, semantic cache (aiosqlite) | `pip install token-smithers[learning]` |
+| `prose` | Prose/documentation summarization via TextRank (sumy) | `pip install token-smithers[prose]` |
+| Both | All features | `pip install "Token Smithers[learning,prose]"` |
 
 **Core dependencies** (always installed):
 
@@ -107,8 +109,8 @@ pipx install "token-sieve[learning,prose]"
 <summary>Install from source (for contributors)</summary>
 
 ```bash
-git clone https://github.com/yourusername/token-sieve.git
-cd token-sieve
+git clone https://github.com/shaharbard/token-smithers.git
+cd token-smithers
 pip install -e ".[dev]"
 ```
 
@@ -119,10 +121,10 @@ pip install -e ".[dev]"
 Three commands to get running:
 
 ```bash
-pipx install token-sieve[learning]    # 1. Install
-token-sieve setup                      # 2. Pick which MCP servers to compress
+pipx install token-smithers[learning]    # 1. Install
+token-smithers setup                      # 2. Pick which MCP servers to compress
 # ... use Claude Code normally ...
-token-sieve stats                      # 3. Check your savings
+token-smithers stats                      # 3. Check your savings
 ```
 
 ### Automatic setup
@@ -130,7 +132,7 @@ token-sieve stats                      # 3. Check your savings
 The setup command finds your existing MCP servers and lets you choose which ones to compress.
 
 ```bash
-token-sieve setup
+token-smithers setup
 ```
 
 ```
@@ -145,13 +147,13 @@ Found 2 MCP config files:
     4. filesystem    npx -y @modelcontextprotocol/server-filesystem .
     5. my-database   my-db-server --port 5432
 
-Which servers should token-sieve compress? (comma-separated, or 'all')
+Which servers should token-smithers compress? (comma-separated, or 'all')
 > 1,4,5
 ```
 
-That's it. token-sieve:
-- Creates a config file per server in `~/.token-sieve/configs/`
-- Updates your MCP configs to route through token-sieve
+That's it. Token Smithers:
+- Creates a config file per server in `~/.token-smithers/configs/`
+- Updates your MCP configs to route through Token Smithers
 - Backs up originals to `.mcp.json.backup` / `~/.claude.json.backup`
 
 The setup scans both config locations:
@@ -160,10 +162,10 @@ The setup scans both config locations:
 
 ### Undo setup
 
-To remove token-sieve and restore your original MCP server connections:
+To remove Token Smithers and restore your original MCP server connections:
 
 ```bash
-token-sieve setup --undo
+token-smithers setup --undo
 ```
 
 ```
@@ -182,17 +184,21 @@ This reads the generated YAML configs to recover the original commands and rewri
 ### Check your savings
 
 ```bash
-token-sieve stats
+token-smithers stats
 ```
 
 ```
-=== Token Sieve Session Stats ===
+  "Excellent..."
+
+  === Token Smithers — Session Stats ===
   Events:     142
-  Original:   284000 tokens
-  Compressed: 156200 tokens
-  Savings:    45.0%
+  Original:   284,000 tokens
+  Compressed: 156,200 tokens
+  Saved:      127,800 tokens (45.0%)
 
-=== Per-Strategy Breakdown ===
+  Smithers, we saved 127,800 tokens. Not a single one squandered.
+
+  === Per-Strategy Breakdown ===
   Strategy                        Count   Original Compressed
   ------------------------------ ------ ---------- ----------
   whitespace_normalizer              142     284000     241400
@@ -203,14 +209,14 @@ token-sieve stats
 
 ## Manual Setup
 
-If you prefer to configure token-sieve by hand instead of using `token-sieve setup`, here's how.
+If you prefer to configure Token Smithers by hand instead of using `token-smithers setup`, here's how.
 
 ### Step 1: Create a config file
 
 For each MCP server you want to compress, create a YAML config file:
 
 ```yaml
-# ~/.token-sieve/configs/filesystem.yaml
+# ~/.token-smithers/configs/filesystem.yaml
 backend:
   command: "npx"
   args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/dir"]
@@ -220,7 +226,7 @@ That's the minimum. All compression features are enabled by default with sensibl
 
 ### Step 2: Update your MCP config
 
-Edit your `.mcp.json` (project) or `~/.claude.json` (global) to route through token-sieve.
+Edit your `.mcp.json` (project) or `~/.claude.json` (global) to route through Token Smithers.
 
 **Before** (direct connection):
 ```json
@@ -234,31 +240,31 @@ Edit your `.mcp.json` (project) or `~/.claude.json` (global) to route through to
 }
 ```
 
-**After** (through token-sieve):
+**After** (through Token Smithers):
 ```json
 {
   "mcpServers": {
     "filesystem": {
-      "command": "token-sieve",
-      "args": ["--config", "~/.token-sieve/configs/filesystem.yaml"]
+      "command": "token-smithers",
+      "args": ["--config", "~/.token-smithers/configs/filesystem.yaml"]
     }
   }
 }
 ```
 
-token-sieve works with **any MCP server** — filesystem, GitHub, database, custom servers, anything that speaks the MCP protocol. Wrap each backend server you want compressed with its own config file.
+Token Smithers works with **any MCP server** — filesystem, GitHub, database, custom servers, anything that speaks the MCP protocol. Wrap each backend server you want compressed with its own config file.
 
 **Multiple servers:**
 ```json
 {
   "mcpServers": {
     "filesystem": {
-      "command": "token-sieve",
-      "args": ["--config", "~/.token-sieve/configs/filesystem.yaml"]
+      "command": "token-smithers",
+      "args": ["--config", "~/.token-smithers/configs/filesystem.yaml"]
     },
     "github": {
-      "command": "token-sieve",
-      "args": ["--config", "~/.token-sieve/configs/github.yaml"]
+      "command": "token-smithers",
+      "args": ["--config", "~/.token-smithers/configs/github.yaml"]
     }
   }
 }
@@ -266,11 +272,11 @@ token-sieve works with **any MCP server** — filesystem, GitHub, database, cust
 
 ### Manual undo
 
-To remove token-sieve manually, edit your MCP config and replace the token-sieve entries with the original commands. The original commands are stored in each YAML config file under `backend.command` and `backend.args`:
+To remove Token Smithers manually, edit your MCP config and replace the Token Smithers entries with the original commands. The original commands are stored in each YAML config file under `backend.command` and `backend.args`:
 
 ```bash
 # Check what the original command was
-cat ~/.token-sieve/configs/filesystem.yaml
+cat ~/.token-smithers/configs/filesystem.yaml
 ```
 
 ```yaml
@@ -279,7 +285,7 @@ backend:
   args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"]
 ```
 
-Then update your `.mcp.json` or `~/.claude.json` to use that command directly instead of `token-sieve`.
+Then update your `.mcp.json` or `~/.claude.json` to use that command directly instead of `Token Smithers`.
 
 ## Configuration
 
@@ -340,12 +346,12 @@ semantic_cache:
 # Cross-session learning
 learning:
   enabled: true                     # SQLite persistence for usage stats + caching
-  db_path: "~/.token-sieve/learning.db"
+  db_path: "~/.token-smithers/learning.db"
 
 # Dashboard / metrics
 dashboard:
   enabled: true
-  metrics_file_path: "~/.token-sieve/metrics.json"
+  metrics_file_path: "~/.token-smithers/metrics.json"
 
 # System prompt optimization
 system_prompt:
@@ -366,7 +372,7 @@ cache:
 
 # Observability
 observability:
-  metrics_to_stderr: true           # Emit [token-sieve] log lines per compression event
+  metrics_to_stderr: true           # Emit [Token Smithers] log lines per compression event
   log_level: "INFO"
 ```
 
@@ -430,7 +436,7 @@ Hexagonal Architecture (Ports & Adapters) with DDD principles. The domain core h
 ### Proxy a filesystem server
 
 ```yaml
-# token-sieve.yaml
+# Token Smithers.yaml
 backend:
   command: "npx"
   args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/projects"]
@@ -485,10 +491,10 @@ filter:
 
 ```bash
 # Compress a file directly (no MCP server needed)
-cat large-output.json | token-sieve --pipe
+cat large-output.json | token-smithers --pipe
 
 # Compress from file
-token-sieve --pipe input.txt
+token-smithers --pipe input.txt
 ```
 
 ## Development
