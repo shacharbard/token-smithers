@@ -405,8 +405,16 @@ def _run_wrap(configs: list[McpConfigFile], configs_dir: str) -> int:
             print("No servers found in config files.")
         return 0
 
-    # Display available servers
+    # Guidance
     print("Available MCP servers:\n")
+    print("  TIPS:")
+    print("  - Wrap servers that return raw/verbose data (filesystem, APIs, databases)")
+    print("  - Skip servers that already optimize their output (e.g., jCodeMunch, jDocMunch, context-mode)")
+    print("  - If a server appears at both global and project level, wrap the global one")
+    print("    (global = compressed everywhere, project = only that project)")
+    print("  - Duplicate servers across configs only need wrapping once at the highest level")
+    print()
+
     for i, (cf, srv) in enumerate(available, 1):
         print(f"  {i}. [{cf.scope}] {srv.name} ({srv.command} {' '.join(srv.args)})")
 
