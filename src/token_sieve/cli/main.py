@@ -343,6 +343,11 @@ def main(argv: list[str] | None = None) -> int:
         undo = "--undo" in effective_argv
         return run_setup(undo=undo)
 
+    if effective_argv and effective_argv[0] == "estimate":
+        from token_sieve.cli.estimate import run_estimate
+
+        return run_estimate()
+
     parser = argparse.ArgumentParser(
         prog="token-smithers",
         description="Token Smithers — your loyal assistant for token efficiency",
