@@ -250,10 +250,12 @@ token-smithers status-line
 ```
 
 ```
-Smithers: 127.8K (45%)         # green when >= 40%
-Smithers: 52.0K (23%)          # blue when >= 20%
-Smithers: 8.2K (6%)            # red when < 20%
+Smithers: 1.2M (42%) | today: 52.0K (38%)     # green when >= 40%
+Smithers: 340.5K (23%) | today: 12.1K (19%)   # blue when >= 20%
+Smithers: 8.2K (6%) | today: 1.4K (5%)        # red when < 20%
 ```
+
+Shows cumulative all-time savings and today's savings side by side. Data is read from the SQLite learning store, so it persists across sessions.
 
 **Claude Code** — add to your settings (`~/.claude/settings.json`):
 

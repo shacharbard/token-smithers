@@ -238,31 +238,65 @@ def _run_stats() -> int:
     return 0
 
 
-def _run_status_line() -> int:
-    """Print a one-liner for status bar integration."""
-    import json
+def _format_tokens(n: int) -> str:
+    """Format token count: 1200 → 1.2K, 1500000 → 1.5M."""
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}K"
+    return str(n)
+
+
+def _query_learning_db() -> tuple[int, int, int, int]:
+    """Query SQLite learning DB for cumulative and daily savings.
+
+    Returns (cumulative_saved, cumulative_ratio_pct, daily_saved, daily_ratio_pct).
+    All values are 0 if DB is unavailable.
+    """
     import os
+    import sqlite3
+    from datetime import date
 
-    metrics_path = os.environ.get(
-        "TOKEN_SIEVE_METRICS_PATH",
-        os.path.expanduser("~/.token-sieve/metrics.json"),
-    )
-
-    if not Path(metrics_path).exists():
-        print("Smithers: awaiting first call...")
-        return 0
+    db_path = os.path.expanduser("~/.token-sieve/learning.db")
+    if not Path(db_path).exists():
+        return 0, 0, 0, 0
 
     try:
-        data = json.loads(Path(metrics_path).read_text())
-    except (json.JSONDecodeError, OSError):
-        print("Smithers: metrics unavailable")
-        return 0
+        conn = sqlite3.connect(db_path, timeout=1)
+        # Cumulative totals
+        row = conn.execute(
+            "SELECT COALESCE(SUM(original_tokens), 0), "
+            "COALESCE(SUM(compressed_tokens), 0) FROM compression_events"
+        ).fetchone()
+        cum_orig, cum_comp = row[0], row[1]
+        cum_saved = cum_orig - cum_comp
+        cum_pct = round(cum_saved / cum_orig * 100) if cum_orig > 0 else 0
 
-    summary = data.get("session_summary", {})
-    ratio = summary.get("total_savings_ratio", 0)
-    original = summary.get("total_original_tokens", 0)
-    compressed = summary.get("total_compressed_tokens", 0)
-    saved = original - compressed
+        # Daily totals (today in UTC)
+        today = date.today().isoformat()
+        row = conn.execute(
+            "SELECT COALESCE(SUM(original_tokens), 0), "
+            "COALESCE(SUM(compressed_tokens), 0) FROM compression_events "
+            "WHERE created_at >= ?",
+            (today,),
+        ).fetchone()
+        day_orig, day_comp = row[0], row[1]
+        day_saved = day_orig - day_comp
+        day_pct = round(day_saved / day_orig * 100) if day_orig > 0 else 0
+
+        conn.close()
+        return cum_saved, cum_pct, day_saved, day_pct
+    except Exception:
+        return 0, 0, 0, 0
+
+
+def _run_status_line() -> int:
+    """Print a compact one-liner for status bar integration.
+
+    Format: Smithers: 1.2M (42%) | today: 52.0K (38%)
+    Color: green >= 40%, blue >= 20%, red < 20%
+    """
+    cum_saved, cum_pct, day_saved, day_pct = _query_learning_db()
 
     # ANSI colors
     GREEN = "\033[32m"
@@ -271,23 +305,22 @@ def _run_status_line() -> int:
     DIM = "\033[2m"
     RESET = "\033[0m"
 
-    # Format number: 1200 → 1.2K, 1500000 → 1.5M
-    if saved >= 1_000_000:
-        short = f"{saved / 1_000_000:.1f}M"
-    elif saved >= 1_000:
-        short = f"{saved / 1_000:.1f}K"
-    else:
-        short = str(saved)
-
-    if saved == 0:
+    if cum_saved == 0 and day_saved == 0:
         print(f"{DIM}Smithers: 0{RESET}")
-    elif ratio >= 0.4:
-        print(f"{GREEN}Smithers: {short} ({ratio:.0%}){RESET}")
-    elif ratio >= 0.2:
-        print(f"{BLUE}Smithers: {short} ({ratio:.0%}){RESET}")
-    else:
-        print(f"{RED}Smithers: {short} ({ratio:.0%}){RESET}")
+        return 0
 
+    # Color based on cumulative ratio
+    if cum_pct >= 40:
+        color = GREEN
+    elif cum_pct >= 20:
+        color = BLUE
+    else:
+        color = RED
+
+    cum_str = f"{_format_tokens(cum_saved)} ({cum_pct}%)"
+    day_str = f"{_format_tokens(day_saved)} ({day_pct}%)"
+
+    print(f"{color}Smithers: {cum_str} | today: {day_str}{RESET}")
     return 0
 
 
