@@ -12,6 +12,8 @@ Like any good assistant, Smithers does the dirty work silently — and reports b
 
 **Works with any MCP client** — Claude Code, Codex, Cursor, Windsurf, Cline, or anything that speaks the MCP protocol. Not tied to any specific tool.
 
+> **Note:** Token Smithers currently supports **stdio MCP servers** (servers launched as a subprocess). HTTP/remote MCP servers (e.g., servers connected via URL) are not yet supported. Most MCP servers use stdio — check your config for `"type": "stdio"` or `"command"` entries.
+
 ## Which MCP Servers Should I Wrap?
 
 Each MCP server is an independent backend. Your AI coding tool talks to each one separately — they don't share traffic with each other:
