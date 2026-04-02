@@ -22,6 +22,40 @@ token-sieve intercepts MCP traffic and applies a multi-stage compression pipelin
 | **AST skeleton** | Extracts function signatures from Python source, drops bodies | 50-80% |
 | **System prompt compression** | Compresses backend server instructions at startup | 15-30% |
 
+## How It Works
+
+1. **Claude Code calls a tool** via MCP → token-sieve receives the request
+2. **Safety check**: Mutating tools (write, delete, create) always go to backend — never cached
+3. **Cache check**: Read-only tools checked against semantic cache for similar prior results
+4. **Backend call**: Request forwarded to your backend MCP server
+5. **Compression pipeline**: Result passes through the adapter chain (cleanup → content-specific → safety net)
+6. **Response**: Compressed result returned to Claude Code
+7. **Learning**: Usage stats and compression events recorded for cross-session optimization
+
+## Performance Overhead
+
+token-sieve adds negligible latency. The compression pipeline is pure Python string and JSON operations — no ML inference, no GPU, no network calls.
+
+**Measured pipeline latency (full 11-adapter chain):**
+
+| Content type | Input size | Pipeline time | Compression |
+|-------------|-----------|--------------|-------------|
+| Small JSON object | 29 chars | 0.06ms | 28% smaller |
+| JSON array (50 items) | 5.7 KB | 0.23ms | 47% smaller |
+| JSON array (200 items) | 31 KB | 0.99ms | 58% smaller |
+| Python source file | 2.8 KB | 0.37ms | 58% smaller |
+| Dependency graph | 162 chars | 0.13ms | 2% smaller |
+
+A typical MCP tool call (filesystem read, API request, database query) takes **50-500ms** for the backend to respond. token-sieve's compression pipeline runs in **under 1ms** even for large results — adding less than 1% to the total round-trip time.
+
+**Why so fast:**
+- All compression is string manipulation, regex, and JSON parse/serialize — no heavy computation
+- Content-aware routing skips adapters that can't handle the content type (`can_handle` check)
+- Small results (<2000 tokens) skip the pipeline entirely via the size gate
+- No network calls — everything runs in-process between Claude Code and your backend
+
+The only non-trivial cost is the semantic cache fuzzy lookup (SequenceMatcher on up to 100 cached entries), which adds 1-5ms when enabled. Exact-match cache hits are O(1).
+
 ## Requirements
 
 - **Python 3.11+**
@@ -451,40 +485,6 @@ pytest -m benchmark
 - 933+ tests
 - 91.8% coverage
 - Unit / Integration / E2E / Contract / Golden file test pyramid
-
-## Performance Overhead
-
-token-sieve adds negligible latency. The compression pipeline is pure Python string and JSON operations — no ML inference, no GPU, no network calls.
-
-**Measured pipeline latency (full 11-adapter chain):**
-
-| Content type | Input size | Pipeline time | Compression |
-|-------------|-----------|--------------|-------------|
-| Small JSON object | 29 chars | 0.06ms | 28% smaller |
-| JSON array (50 items) | 5.7 KB | 0.23ms | 47% smaller |
-| JSON array (200 items) | 31 KB | 0.99ms | 58% smaller |
-| Python source file | 2.8 KB | 0.37ms | 58% smaller |
-| Dependency graph | 162 chars | 0.13ms | 2% smaller |
-
-A typical MCP tool call (filesystem read, API request, database query) takes **50-500ms** for the backend to respond. token-sieve's compression pipeline runs in **under 1ms** even for large results — adding less than 1% to the total round-trip time.
-
-**Why so fast:**
-- All compression is string manipulation, regex, and JSON parse/serialize — no heavy computation
-- Content-aware routing skips adapters that can't handle the content type (`can_handle` check)
-- Small results (<2000 tokens) skip the pipeline entirely via the size gate
-- No network calls — everything runs in-process between Claude Code and your backend
-
-The only non-trivial cost is the semantic cache fuzzy lookup (SequenceMatcher on up to 100 cached entries), which adds 1-5ms when enabled. Exact-match cache hits are O(1).
-
-## How It Works
-
-1. **Claude Code calls a tool** via MCP → token-sieve receives the request
-2. **Safety check**: Mutating tools (write, delete, create) always go to backend — never cached
-3. **Cache check**: Read-only tools checked against semantic cache for similar prior results
-4. **Backend call**: Request forwarded to your backend MCP server
-5. **Compression pipeline**: Result passes through the adapter chain (cleanup → content-specific → safety net)
-6. **Response**: Compressed result returned to Claude Code
-7. **Learning**: Usage stats and compression events recorded for cross-session optimization
 
 ## License
 
