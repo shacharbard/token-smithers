@@ -54,6 +54,30 @@ AI coding tools like Claude Code have **built-in tools** (Read, Edit, Grep, Bash
 
 **If you already use optimization tools** like jCodeMunch, jDocMunch, or context-mode, those handle most of the heavy lifting for code reads, doc reads, and command output. Token Smithers still adds value for MCP servers those tools don't cover — API servers (GitHub, EXA), memory stores (Muninn), documentation fetchers (context7), and any future MCP server you add.
 
+## Savings by MCP Server
+
+Measured on realistic schemas and responses for popular MCP servers:
+
+| MCP Server | Tools | Schema saved | Result saved | Where savings come from |
+|-----------|------:|:------------:|:------------:|------------------------|
+| **context7** | 2 | **64%** | low | Schema virtualization (DietMCP notation) |
+| **EXA (search)** | 3 | 25% | **42%** | Search result JSON compression |
+| **GitHub MCP** | 10 | **33%** | **25%** | Null fields, timestamps, repeated structures |
+| **Filesystem MCP** | 8 | **41%** | **41%** | Path dedup, null fields, file listing arrays |
+| **Muninn** | 10 | **38%** | **52%** | Memory recall JSON, entity lists |
+
+### Per-session impact
+
+Every MCP server you have loaded costs tokens on **every `tools/list` refresh** — even if you never call those tools. With 5 MCP servers (33 tools total):
+
+| | Without Smithers | With Smithers | Saved |
+|--|--:|--:|--:|
+| Per tools/list refresh | 2,650 tokens | 1,653 tokens | **997 tokens (38%)** |
+| Per session (~5 refreshes) | 13,250 tokens | 8,265 tokens | **~5,000 tokens** |
+| + 10 tool calls | ~63,250 tokens | ~39,265 tokens | **~25,000 tokens** |
+
+The more MCP servers you have, the more schema overhead you pay per refresh — and the more Token Smithers saves.
+
 ## What It Does
 
 | Feature | What happens | Token savings |
