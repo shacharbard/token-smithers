@@ -40,6 +40,20 @@ Token Smithers wraps **one server at a time**. You choose which ones benefit fro
 
 `token-smithers setup` shows all your servers and lets you pick. You can always undo with `token-smithers setup --undo`.
 
+### Built-in tools vs MCP servers
+
+AI coding tools like Claude Code have **built-in tools** (Read, Edit, Grep, Bash) that don't go through MCP. Token Smithers can only compress MCP server traffic — not built-in tool calls.
+
+| Tool | Type | Token Smithers? |
+|------|------|:-:|
+| Read, Edit, Grep, Bash, Write, Glob | Built-in | -- |
+| Filesystem MCP, GitHub MCP, database MCP | MCP server | Yes |
+| Already-optimized MCPs (jCodeMunch, jDocMunch, context-mode) | MCP server | Skip |
+
+**If you use standard MCP servers** (filesystem, GitHub, database, etc.) that return raw uncompressed data, Token Smithers gives the biggest savings — up to 62% across all content types.
+
+**If you already use optimization tools** like jCodeMunch, jDocMunch, or context-mode, those handle most of the heavy lifting for code reads, doc reads, and command output. Token Smithers still adds value for MCP servers those tools don't cover — API servers (GitHub, EXA), memory stores (Muninn), documentation fetchers (context7), and any future MCP server you add.
+
 ## What It Does
 
 | Feature | What happens | Token savings |
