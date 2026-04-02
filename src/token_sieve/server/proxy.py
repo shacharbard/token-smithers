@@ -30,6 +30,17 @@ class ProxyServer:
     The create_from_config() class method builds all dependencies from config.
     """
 
+    # Safe-by-default: only tools matching these read-only patterns use semantic cache.
+    # Unknown tools (bash, execute, mv, etc.) are denied cache by default.
+    _CACHEABLE_PATTERNS: frozenset[str] = frozenset({
+        "read", "get", "list", "search", "find", "describe", "show", "view",
+        "stat", "info", "status", "query", "fetch", "check", "count", "browse",
+        "outline", "hover", "symbols", "references", "diagnostics", "toc",
+        "section", "lookup", "suggest", "resolve",
+    })
+
+    _MAX_LEARNING_FAILURES: int = 3
+
     def __init__(
         self,
         backend_connector: Any,
@@ -55,6 +66,7 @@ class ProxyServer:
         self._schema_cache = schema_cache
         self._schema_virtualizer = schema_virtualizer
         self._learning_store = learning_store
+        self._learning_store_failures: int = 0
         self._semantic_cache = semantic_cache
         self._metrics_collector = metrics_collector
         self._server = self._build_mcp_server()
@@ -68,6 +80,15 @@ class ProxyServer:
         if self._schema_cache is not None:
             self._schema_cache._provider = connector
             self._schema_cache.invalidate()
+
+    def _is_cacheable(self, name: str) -> bool:
+        """Check if a tool name matches known read-only patterns (allowlist).
+
+        Returns True only if the tool name contains at least one cacheable
+        substring. Unknown tools default to NOT cacheable (safe-by-default).
+        """
+        lower = name.lower()
+        return any(pattern in lower for pattern in self._CACHEABLE_PATTERNS)
 
     def _build_mcp_server(self) -> Server:
         """Create the low-level MCP Server with handlers wired to self."""
@@ -255,19 +276,34 @@ class ProxyServer:
     async def _record_to_learning_store(
         self, name: str, events: list[Any]
     ) -> None:
-        """Record tool call and compression events to learning store."""
+        """Record tool call and compression events to learning store.
+
+        Tolerates up to _MAX_LEARNING_FAILURES consecutive errors before
+        permanently disabling the store.  A successful call resets the
+        failure counter so transient errors don't accumulate.
+        """
         try:
             await self._learning_store.record_call(name, "default")
             for event in events:
                 await self._learning_store.record_compression_event(
                     "session", event, name
                 )
+            # Success — reset failure counter
+            self._learning_store_failures = 0
         except Exception as exc:
+            self._learning_store_failures += 1
             print(
-                f"Warning: learning store I/O failed, disabling: {exc}",
+                f"Warning: learning store I/O failed "
+                f"({self._learning_store_failures}/{self._MAX_LEARNING_FAILURES}): {exc}",
                 file=__import__("sys").stderr,
             )
-            self._learning_store = None
+            if self._learning_store_failures >= self._MAX_LEARNING_FAILURES:
+                print(
+                    "Warning: learning store permanently disabled after "
+                    f"{self._MAX_LEARNING_FAILURES} consecutive failures",
+                    file=__import__("sys").stderr,
+                )
+                self._learning_store = None
 
     async def handle_call_tool(
         self, name: str, arguments: dict[str, Any]
@@ -296,11 +332,8 @@ class ProxyServer:
             )
 
         # Short-circuit: check semantic cache before exact-match cache
-        # F1: Skip semantic cache for mutating tool calls
-        is_mutating = (
-            self._invalidator is not None and self._invalidator.is_mutating(name)
-        )
-        if self._semantic_cache is not None and not is_mutating:
+        # Safe-by-default: only use cache for known read-only tools (allowlist)
+        if self._semantic_cache is not None and self._is_cacheable(name):
             sem_result = await self._check_semantic_cache(name, arguments)
             if sem_result is not None:
                 if self._reranker is not None:

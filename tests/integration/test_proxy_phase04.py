@@ -240,3 +240,137 @@ class TestPhase04EndToEnd:
         tools = await proxy.handle_list_tools()
         # read_file should appear first (most used)
         assert tools[0].name == "read_file"
+
+    @pytest.mark.asyncio
+    async def test_mutating_tool_bypasses_semantic_cache(
+        self, backend, tools
+    ) -> None:
+        """A mutating tool must always hit the backend, even with warm cache."""
+        from token_sieve.adapters.compression.whitespace_normalizer import WhitespaceNormalizer
+        from token_sieve.domain.counters import CharEstimateCounter
+        from token_sieve.domain.ports_cache import CacheHit
+        from token_sieve.server.metrics_sink import StderrMetricsSink
+
+        counter = CharEstimateCounter()
+        pipeline = CompressionPipeline(counter=counter, size_gate_threshold=50)
+        pipeline.register(ContentType.TEXT, WhitespaceNormalizer())
+
+        semantic_cache = AsyncMock()
+        semantic_cache.lookup_similar = AsyncMock(return_value=None)
+        semantic_cache.cache_result = AsyncMock()
+        semantic_cache.evict_expired = AsyncMock()
+        semantic_cache.similarity_threshold = 0.85
+
+        proxy = ProxyServer(
+            backend_connector=backend,
+            tool_filter=ToolFilter(mode="passthrough"),
+            pipeline=pipeline,
+            metrics_sink=StderrMetricsSink(),
+            semantic_cache=semantic_cache,
+        )
+
+        # First call to write_file — hits backend
+        result1 = await proxy.handle_call_tool("write_file", {"path": "/a.py", "content": "x"})
+        assert not result1.isError
+
+        # Configure cache to return a stale hit (should NOT be used for writes)
+        semantic_cache.lookup_similar = AsyncMock(
+            return_value=CacheHit(
+                result_text="STALE CACHED RESULT",
+                similarity_score=0.99,
+                hit_count=5,
+            )
+        )
+
+        # Change backend return for write_file
+        backend.call_tool = AsyncMock(
+            return_value=types.CallToolResult(
+                content=[types.TextContent(type="text", text="NEW backend result")],
+                isError=False,
+            )
+        )
+
+        # Second write_file call — must hit backend, NOT return cached
+        result2 = await proxy.handle_call_tool("write_file", {"path": "/a.py", "content": "y"})
+        assert "STALE CACHED RESULT" not in result2.content[0].text
+        backend.call_tool.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_non_standard_mutating_tool_bypasses_cache(
+        self, backend, tools
+    ) -> None:
+        """Tools like 'bash' or 'execute' with no read-like pattern must bypass cache."""
+        from token_sieve.adapters.compression.whitespace_normalizer import WhitespaceNormalizer
+        from token_sieve.domain.counters import CharEstimateCounter
+        from token_sieve.domain.ports_cache import CacheHit
+        from token_sieve.server.metrics_sink import StderrMetricsSink
+
+        counter = CharEstimateCounter()
+        pipeline = CompressionPipeline(counter=counter, size_gate_threshold=50)
+        pipeline.register(ContentType.TEXT, WhitespaceNormalizer())
+
+        semantic_cache = AsyncMock()
+        semantic_cache.lookup_similar = AsyncMock(
+            return_value=CacheHit(
+                result_text="SHOULD NOT USE THIS",
+                similarity_score=0.95,
+                hit_count=3,
+            )
+        )
+        semantic_cache.cache_result = AsyncMock()
+        semantic_cache.evict_expired = AsyncMock()
+        semantic_cache.similarity_threshold = 0.85
+
+        proxy = ProxyServer(
+            backend_connector=backend,
+            tool_filter=ToolFilter(mode="passthrough"),
+            pipeline=pipeline,
+            metrics_sink=StderrMetricsSink(),
+            semantic_cache=semantic_cache,
+        )
+
+        result = await proxy.handle_call_tool("bash", {"cmd": "ls -la"})
+        assert not result.isError
+        # Must NOT have returned the cached result
+        assert "SHOULD NOT USE THIS" not in result.content[0].text
+        # Backend must have been called
+        backend.call_tool.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_read_tool_uses_semantic_cache(
+        self, backend, tools
+    ) -> None:
+        """A read-like tool should use the semantic cache when it has a hit."""
+        from token_sieve.adapters.compression.whitespace_normalizer import WhitespaceNormalizer
+        from token_sieve.domain.counters import CharEstimateCounter
+        from token_sieve.domain.ports_cache import CacheHit
+        from token_sieve.server.metrics_sink import StderrMetricsSink
+
+        counter = CharEstimateCounter()
+        pipeline = CompressionPipeline(counter=counter, size_gate_threshold=50)
+        pipeline.register(ContentType.TEXT, WhitespaceNormalizer())
+
+        semantic_cache = AsyncMock()
+        semantic_cache.lookup_similar = AsyncMock(
+            return_value=CacheHit(
+                result_text="cached read result",
+                similarity_score=0.92,
+                hit_count=2,
+            )
+        )
+        semantic_cache.evict_expired = AsyncMock()
+        semantic_cache.similarity_threshold = 0.85
+
+        proxy = ProxyServer(
+            backend_connector=backend,
+            tool_filter=ToolFilter(mode="passthrough"),
+            pipeline=pipeline,
+            metrics_sink=StderrMetricsSink(),
+            semantic_cache=semantic_cache,
+        )
+
+        result = await proxy.handle_call_tool("read_file", {"path": "/foo.py"})
+        # Should return the cached value
+        assert result.content[0].text == "cached read result"
+        # Backend should NOT have been called
+        backend.call_tool.assert_not_called()

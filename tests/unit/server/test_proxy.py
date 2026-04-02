@@ -778,20 +778,19 @@ class TestLearningStoreIOSafety:
         assert not result.isError
 
     @pytest.mark.asyncio
-    async def test_learning_store_disabled_after_error(self) -> None:
-        """After one failure, learning store should be disabled for session."""
+    async def test_learning_store_disabled_after_max_failures(self) -> None:
+        """After 3 consecutive failures, learning store should be disabled."""
         from token_sieve.server.proxy import ProxyServer
 
         call_count = 0
 
-        async def record_call_fail(*args: Any) -> None:
+        async def always_fail(*args: Any) -> None:
             nonlocal call_count
             call_count += 1
-            if call_count == 1:
-                raise IOError("disk full")
+            raise IOError("disk full")
 
         learning_store = AsyncMock()
-        learning_store.record_call = AsyncMock(side_effect=record_call_fail)
+        learning_store.record_call = AsyncMock(side_effect=always_fail)
 
         connector = _make_fake_connector(
             call_result=_make_call_result("result"),
@@ -805,11 +804,11 @@ class TestLearningStoreIOSafety:
             learning_store=learning_store,
         )
 
-        await proxy.handle_call_tool("read_file", {"path": "/a"})
-        await proxy.handle_call_tool("read_file", {"path": "/b"})
+        for i in range(4):
+            await proxy.handle_call_tool("read_file", {"path": f"/{i}"})
 
-        # Second call should not attempt learning store (disabled after error)
-        assert call_count == 1, "Learning store should be disabled after first failure"
+        # 3 failures then disabled — 4th call should not attempt
+        assert call_count == 3, "Learning store should be disabled after 3 consecutive failures"
 
     @pytest.mark.asyncio
     async def test_semantic_cache_store_error_does_not_crash(self) -> None:
@@ -982,3 +981,220 @@ class TestProxyRunCleanup:
                 await proxy.run()
 
         pipeline.cleanup.assert_called_once()
+
+
+class TestCacheableAllowlist:
+    """Item 1: Semantic cache should only be used for known-safe (read-only) tools."""
+
+    def test_read_tool_is_cacheable(self) -> None:
+        """Tools with read-like names should be cacheable."""
+        from token_sieve.server.proxy import ProxyServer
+
+        proxy = ProxyServer(
+            backend_connector=_make_fake_connector(),
+            tool_filter=_make_fake_filter(allowed=True),
+            pipeline=_make_fake_pipeline(),
+            metrics_sink=_make_fake_sink(),
+        )
+        assert proxy._is_cacheable("read_file") is True
+        assert proxy._is_cacheable("get_symbol") is True
+        assert proxy._is_cacheable("list_tools") is True
+        assert proxy._is_cacheable("search_files") is True
+        assert proxy._is_cacheable("find_references") is True
+        assert proxy._is_cacheable("describe_table") is True
+        assert proxy._is_cacheable("show_config") is True
+        assert proxy._is_cacheable("view_log") is True
+        assert proxy._is_cacheable("fetch_data") is True
+        assert proxy._is_cacheable("check_status") is True
+        assert proxy._is_cacheable("query_db") is True
+        assert proxy._is_cacheable("browse_dir") is True
+
+    def test_mutating_tool_not_cacheable(self) -> None:
+        """Tools with write-like names should NOT be cacheable."""
+        from token_sieve.server.proxy import ProxyServer
+
+        proxy = ProxyServer(
+            backend_connector=_make_fake_connector(),
+            tool_filter=_make_fake_filter(allowed=True),
+            pipeline=_make_fake_pipeline(),
+            metrics_sink=_make_fake_sink(),
+        )
+        assert proxy._is_cacheable("write_file") is False
+        assert proxy._is_cacheable("create_dir") is False
+        assert proxy._is_cacheable("delete_item") is False
+        assert proxy._is_cacheable("update_record") is False
+
+    def test_unknown_tool_not_cacheable(self) -> None:
+        """Tools with non-standard names (bash, execute, mv) should NOT be cacheable."""
+        from token_sieve.server.proxy import ProxyServer
+
+        proxy = ProxyServer(
+            backend_connector=_make_fake_connector(),
+            tool_filter=_make_fake_filter(allowed=True),
+            pipeline=_make_fake_pipeline(),
+            metrics_sink=_make_fake_sink(),
+        )
+        assert proxy._is_cacheable("bash") is False
+        assert proxy._is_cacheable("execute") is False
+        assert proxy._is_cacheable("run_command") is False
+        assert proxy._is_cacheable("apply_patch") is False
+        assert proxy._is_cacheable("mv") is False
+        assert proxy._is_cacheable("chmod") is False
+        assert proxy._is_cacheable("kill") is False
+
+    @pytest.mark.asyncio
+    async def test_unknown_tool_bypasses_semantic_cache(self) -> None:
+        """A tool like 'bash' must not use semantic cache even with a warm cache."""
+        from token_sieve.server.proxy import ProxyServer
+
+        semantic_cache = AsyncMock()
+        semantic_cache.lookup_similar = AsyncMock(return_value=None)
+        semantic_cache.cache_result = AsyncMock()
+        semantic_cache.evict_expired = AsyncMock()
+        semantic_cache.similarity_threshold = 0.85
+
+        connector = _make_fake_connector(call_result=_make_call_result("live result"))
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=_make_fake_filter(allowed=True),
+            pipeline=_make_fake_pipeline(),
+            metrics_sink=_make_fake_sink(),
+            semantic_cache=semantic_cache,
+        )
+
+        result = await proxy.handle_call_tool("bash", {"cmd": "ls"})
+        assert not result.isError
+        # Semantic cache should NOT have been consulted
+        semantic_cache.lookup_similar.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cacheable_tool_uses_semantic_cache(self) -> None:
+        """A read-like tool should consult the semantic cache."""
+        from token_sieve.server.proxy import ProxyServer
+
+        semantic_cache = AsyncMock()
+        semantic_cache.lookup_similar = AsyncMock(return_value=None)
+        semantic_cache.cache_result = AsyncMock()
+        semantic_cache.evict_expired = AsyncMock()
+        semantic_cache.similarity_threshold = 0.85
+
+        connector = _make_fake_connector(call_result=_make_call_result("file contents"))
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=_make_fake_filter(allowed=True),
+            pipeline=_make_fake_pipeline(),
+            metrics_sink=_make_fake_sink(),
+            semantic_cache=semantic_cache,
+        )
+
+        await proxy.handle_call_tool("read_file", {"path": "/a.py"})
+        semantic_cache.lookup_similar.assert_called()
+
+
+class TestLearningStoreRetry:
+    """Item 3: Learning store should retry before permanent disable."""
+
+    @pytest.mark.asyncio
+    async def test_learning_store_retries_on_transient_error(self) -> None:
+        """After 1 failure, learning store should still be attempted on next call."""
+        from token_sieve.server.proxy import ProxyServer
+
+        call_count = 0
+
+        async def record_call_sometimes_fail(*args: Any) -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise IOError("transient disk error")
+
+        learning_store = AsyncMock()
+        learning_store.record_call = AsyncMock(side_effect=record_call_sometimes_fail)
+        learning_store.record_compression_event = AsyncMock()
+
+        connector = _make_fake_connector(call_result=_make_call_result("result"))
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=_make_fake_filter(allowed=True),
+            pipeline=_make_fake_pipeline(),
+            metrics_sink=_make_fake_sink(),
+            learning_store=learning_store,
+        )
+
+        # First call - fails but should not disable
+        await proxy.handle_call_tool("read_file", {"path": "/a"})
+        # Second call - should still attempt learning store
+        await proxy.handle_call_tool("read_file", {"path": "/b"})
+
+        assert call_count == 2, "Learning store should be retried after first failure"
+
+    @pytest.mark.asyncio
+    async def test_learning_store_disabled_after_max_failures(self) -> None:
+        """After 3 consecutive failures, learning store should be disabled."""
+        from token_sieve.server.proxy import ProxyServer
+
+        call_count = 0
+
+        async def always_fail(*args: Any) -> None:
+            nonlocal call_count
+            call_count += 1
+            raise IOError("persistent disk error")
+
+        learning_store = AsyncMock()
+        learning_store.record_call = AsyncMock(side_effect=always_fail)
+
+        connector = _make_fake_connector(call_result=_make_call_result("result"))
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=_make_fake_filter(allowed=True),
+            pipeline=_make_fake_pipeline(),
+            metrics_sink=_make_fake_sink(),
+            learning_store=learning_store,
+        )
+
+        # 3 calls should each attempt (and fail)
+        for i in range(4):
+            await proxy.handle_call_tool("read_file", {"path": f"/{i}"})
+
+        # After 3 failures, the 4th should not attempt (disabled)
+        assert call_count == 3, "Learning store should be disabled after 3 consecutive failures"
+
+    @pytest.mark.asyncio
+    async def test_learning_store_failure_counter_resets_on_success(self) -> None:
+        """A successful call resets the failure counter."""
+        from token_sieve.server.proxy import ProxyServer
+
+        call_count = 0
+
+        async def fail_then_succeed(*args: Any) -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count in (1, 2):
+                raise IOError("transient")
+            # calls 3+ succeed
+
+        learning_store = AsyncMock()
+        learning_store.record_call = AsyncMock(side_effect=fail_then_succeed)
+        learning_store.record_compression_event = AsyncMock()
+
+        connector = _make_fake_connector(call_result=_make_call_result("result"))
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=_make_fake_filter(allowed=True),
+            pipeline=_make_fake_pipeline(),
+            metrics_sink=_make_fake_sink(),
+            learning_store=learning_store,
+        )
+
+        # 2 failures, then success — counter should reset
+        for i in range(3):
+            await proxy.handle_call_tool("read_file", {"path": f"/{i}"})
+
+        assert call_count == 3
+        # After reset, 2 more failures should still be tolerated
+        # (not disabled because counter was reset by the success)
+        assert proxy._learning_store is not None
