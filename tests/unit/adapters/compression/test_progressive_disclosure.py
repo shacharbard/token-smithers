@@ -204,6 +204,35 @@ class TestProgressiveDisclosureSpecific:
         strategy = ProgressiveDisclosureStrategy(summary_tokens=300)
         assert strategy.summary_tokens == 300
 
+    def test_compress_temp_file_has_restrictive_permissions(self):
+        """Temp files created by compress() must have 0o600 (owner-only) permissions."""
+        import stat
+
+        from token_sieve.adapters.compression.progressive_disclosure import (
+            ProgressiveDisclosureStrategy,
+        )
+
+        envelope = ContentEnvelope(
+            content=_LARGE_CONTENT, content_type=ContentType.TEXT
+        )
+        strategy = ProgressiveDisclosureStrategy(threshold_tokens=100)
+        result = strategy.compress(envelope)
+
+        # Extract file path
+        for line in result.content.splitlines():
+            if "Full result:" in line:
+                path = line.split("Full result:")[1].strip().split(" (")[0]
+                file_stat = os.stat(path)
+                # Check only permission bits (mask off file type)
+                perms = stat.S_IMODE(file_stat.st_mode)
+                assert perms == 0o600, (
+                    f"Expected 0o600 (owner-only), got {oct(perms)}"
+                )
+                os.unlink(path)
+                break
+        else:
+            pytest.fail("No 'Full result:' line found in output")
+
     def test_cleanup_removes_files(self):
         """cleanup() removes created temp files."""
         from token_sieve.adapters.compression.progressive_disclosure import (

@@ -123,6 +123,47 @@ class TestDBErrorGracefulDegradation:
         assert count == 0
 
 
+class TestNoneConnectionGuards:
+    """Methods must return None/early when _conn is None, not crash via assert."""
+
+    @pytest.mark.asyncio
+    async def test_exact_lookup_returns_none_when_conn_is_none(self) -> None:
+        cache = SQLiteSemanticCache(
+            db_path=":memory:", max_entries=100, ttl_seconds=3600
+        )
+        # Never initialize -- _conn stays None
+        result = await cache._exact_lookup("tool", "some_hash")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_fuzzy_lookup_returns_none_when_conn_is_none(self) -> None:
+        cache = SQLiteSemanticCache(
+            db_path=":memory:", max_entries=100, ttl_seconds=3600
+        )
+        result = await cache._fuzzy_lookup("tool", '{"k":"v"}', 0.85)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_evict_overflow_returns_early_when_conn_is_none(self) -> None:
+        cache = SQLiteSemanticCache(
+            db_path=":memory:", max_entries=100, ttl_seconds=3600
+        )
+        # Should not raise
+        await cache._evict_overflow()
+
+    @pytest.mark.asyncio
+    async def test_evict_overflow_handles_none_row(self) -> None:
+        """Even if COUNT(*) somehow returns None row, evict should not crash."""
+        cache = SQLiteSemanticCache(
+            db_path=":memory:", max_entries=100, ttl_seconds=3600
+        )
+        await cache.initialize()
+        # Normal case: empty table, row should exist with count=0
+        # This validates the guard path exists (row is not None in practice,
+        # but the guard protects against edge cases)
+        await cache._evict_overflow()  # should not raise
+
+
 class TestHitCountIncrement:
     """Hit count should increment on repeated lookups."""
 

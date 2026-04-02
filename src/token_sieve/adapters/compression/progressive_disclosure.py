@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import stat
 import tempfile
 
 from token_sieve.domain.counters import CharEstimateCounter
@@ -67,6 +68,10 @@ class ProgressiveDisclosureStrategy:
             f.write(content_bytes)
         finally:
             f.close()
+
+        # Restrict to owner-only access (0o600) — defense-in-depth
+        # against permissive umask on some Linux configurations.
+        os.chmod(f.name, stat.S_IRUSR | stat.S_IWUSR)
 
         self._created_files.append(f.name)
 

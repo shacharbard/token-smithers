@@ -146,7 +146,8 @@ class SQLiteSemanticCache:
         self, tool_name: str, args_hash: str
     ) -> CacheHit | None:
         """O(1) lookup by args_hash index."""
-        assert self._conn is not None
+        if self._conn is None:
+            return None
         cursor = await self._conn.execute(
             """SELECT id, result_text, hit_count
                FROM result_cache
@@ -176,7 +177,8 @@ class SQLiteSemanticCache:
         self, tool_name: str, args_normalized: str, threshold: float
     ) -> CacheHit | None:
         """Scan recent entries for the tool, compute similarity."""
-        assert self._conn is not None
+        if self._conn is None:
+            return None
         cursor = await self._conn.execute(
             """SELECT id, args_normalized, result_text, hit_count
                FROM result_cache
@@ -214,12 +216,14 @@ class SQLiteSemanticCache:
 
     async def _evict_overflow(self) -> None:
         """Remove oldest entries if total count exceeds max_entries."""
-        assert self._conn is not None
+        if self._conn is None:
+            return
         cursor = await self._conn.execute(
             "SELECT COUNT(*) FROM result_cache"
         )
         row = await cursor.fetchone()
-        assert row is not None
+        if row is None:
+            return
         total = row[0]
 
         if total > self._max_entries:
