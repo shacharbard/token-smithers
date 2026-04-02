@@ -10,6 +10,8 @@ Your loyal assistant for token efficiency. Token Smithers sits between Claude Co
 
 Like any good assistant, Smithers does the dirty work silently — and reports back with style.
 
+**Works with any MCP client** — Claude Code, Codex, Cursor, Windsurf, Cline, or anything that speaks the MCP protocol. Not tied to any specific tool.
+
 ## What It Does
 
 | Feature | What happens | Token savings |
