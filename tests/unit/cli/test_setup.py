@@ -64,7 +64,7 @@ class TestDiscoverMcpConfigs:
             results = discover_mcp_configs(project_dir=tmp_path)
 
         assert len(results) == 1
-        assert results[0].scope == "project"
+        assert "project" in results[0].scope
         assert len(results[0].servers) == 1
         assert results[0].servers[0].name == "server-a"
         assert results[0].servers[0].command == "npx"
@@ -87,7 +87,7 @@ class TestDiscoverMcpConfigs:
             results = discover_mcp_configs(project_dir=tmp_path / "nonexistent")
 
         assert len(results) == 1
-        assert results[0].scope == "global"
+        assert "global" in results[0].scope
         assert results[0].servers[0].env == {"KEY": "val"}
 
     def test_discover_no_configs(self, tmp_path: Path) -> None:
@@ -166,7 +166,7 @@ class TestWrapServers:
 
         assert set(wrapped) == {"a", "c"}
         # Verify JSON structure updated
-        assert raw["mcpServers"]["a"]["command"] == "token-sieve"
+        assert raw["mcpServers"]["a"]["command"] == "token-smithers"
         assert raw["mcpServers"]["a"]["args"] == [
             "--config",
             str(tmp_path / "configs" / "a.yaml"),

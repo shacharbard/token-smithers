@@ -54,45 +54,60 @@ def _parse_servers(data: dict) -> list[McpServerEntry]:
     return entries
 
 
-def discover_mcp_configs(
-    project_dir: Path | None = None,
-) -> list[McpConfigFile]:
-    """Find MCP config files in project directory and user home.
-
-    Args:
-        project_dir: Directory to search for .mcp.json. Defaults to cwd.
-
-    Returns:
-        List of discovered config files with parsed server entries.
-    """
-    configs: list[McpConfigFile] = []
-
-    # Project-level .mcp.json
-    proj = (project_dir or Path.cwd()) / ".mcp.json"
-    if proj.exists():
-        data = json.loads(proj.read_text())
+def _try_load_config(
+    path: Path, scope: str, configs: list["McpConfigFile"]
+) -> None:
+    """Try to load an MCP config file if it exists and has servers."""
+    if not path.exists():
+        return
+    try:
+        data = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return
+    if data.get("mcpServers"):
         configs.append(
             McpConfigFile(
-                path=proj,
-                scope="project",
+                path=path,
+                scope=scope,
                 servers=_parse_servers(data),
                 raw_data=data,
             )
         )
 
-    # Global ~/.claude.json
-    global_path = Path.home() / ".claude.json"
-    if global_path.exists():
-        data = json.loads(global_path.read_text())
-        if data.get("mcpServers"):
-            configs.append(
-                McpConfigFile(
-                    path=global_path,
-                    scope="global",
-                    servers=_parse_servers(data),
-                    raw_data=data,
-                )
-            )
+
+def discover_mcp_configs(
+    project_dir: Path | None = None,
+) -> list[McpConfigFile]:
+    """Find MCP config files across all known MCP clients.
+
+    Scans project-level and global config locations for:
+    - Claude Code (.mcp.json, ~/.claude.json)
+    - Cursor (.cursor/mcp.json)
+    - Windsurf (.windsurf/mcp.json)
+    - Cline / VS Code (.vscode/mcp.json)
+    - Continue (.continue/config.json)
+
+    Args:
+        project_dir: Directory to search for project-level configs. Defaults to cwd.
+
+    Returns:
+        List of discovered config files with parsed server entries.
+    """
+    configs: list[McpConfigFile] = []
+    proj_root = project_dir or Path.cwd()
+    home = Path.home()
+
+    # -- Project-level configs --
+    _try_load_config(proj_root / ".mcp.json", "project (Claude Code)", configs)
+    _try_load_config(proj_root / ".cursor" / "mcp.json", "project (Cursor)", configs)
+    _try_load_config(proj_root / ".windsurf" / "mcp.json", "project (Windsurf)", configs)
+    _try_load_config(proj_root / ".vscode" / "mcp.json", "project (VS Code/Cline)", configs)
+
+    # -- Global/user-level configs --
+    _try_load_config(home / ".claude.json", "global (Claude Code)", configs)
+    _try_load_config(home / ".cursor" / "mcp.json", "global (Cursor)", configs)
+    _try_load_config(home / ".windsurf" / "mcp.json", "global (Windsurf)", configs)
+    _try_load_config(home / ".continue" / "config.json", "global (Continue)", configs)
 
     return configs
 
