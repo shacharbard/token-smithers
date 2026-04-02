@@ -67,48 +67,52 @@ The only non-trivial cost is the semantic cache fuzzy lookup (SequenceMatcher on
 
 ## Installation
 
-**Recommended** — install with `pipx` (isolated, no venv needed):
+**macOS / Linux:**
 
 ```bash
-pipx install token-smithers[learning]
+pip install "token-smithers[learning] @ git+https://github.com/shacharbard/token-smithers.git@stable"
 ```
 
-Or with `pip`:
+Or with `pipx` (isolated, no venv needed):
 
 ```bash
-pip install token-smithers[learning]
+pipx install "token-smithers[learning] @ git+https://github.com/shacharbard/token-smithers.git@stable"
+```
+
+**Windows (PowerShell):**
+
+```powershell
+pip install "token-smithers[learning] @ git+https://github.com/shacharbard/token-smithers.git@stable"
 ```
 
 That's it. The `token-smithers` command is now available globally.
 
-The `learning` extra includes cross-session learning and semantic caching. For the full feature set:
+<details>
+<summary>Alternative: clone and install</summary>
 
 ```bash
-# Recommended: all features
-pipx install "Token Smithers[learning,prose]"
+git clone https://github.com/shacharbard/token-smithers.git
+cd token-smithers
+pip install ".[learning]"
 ```
-
-<details>
-<summary>Optional extras explained</summary>
-
-| Extra | What it adds | Install command |
-|-------|-------------|----------------|
-| `learning` | Cross-session learning, semantic cache (aiosqlite) | `pip install token-smithers[learning]` |
-| `prose` | Prose/documentation summarization via TextRank (sumy) | `pip install token-smithers[prose]` |
-| Both | All features | `pip install "Token Smithers[learning,prose]"` |
-
-**Core dependencies** (always installed):
-
-| Package | Purpose |
-|---------|---------|
-| `mcp>=1.0.0` | MCP protocol (server + client) |
-| `pyyaml>=6.0` | Config file parsing |
-| `pydantic>=2.0` | Config validation |
 
 </details>
 
 <details>
-<summary>Install from source (for contributors)</summary>
+<summary>Optional extras</summary>
+
+| Extra | What it adds |
+|-------|-------------|
+| `learning` | Cross-session learning, semantic cache (aiosqlite) — **recommended** |
+| `prose` | Prose/documentation summarization via TextRank (sumy) |
+| Both | `pip install "token-smithers[learning,prose] @ git+https://github.com/shacharbard/token-smithers.git@stable"` |
+
+**Core dependencies** (always installed): `mcp>=1.0.0`, `pyyaml>=6.0`, `pydantic>=2.0`
+
+</details>
+
+<details>
+<summary>For contributors</summary>
 
 ```bash
 git clone https://github.com/shacharbard/token-smithers.git
@@ -123,10 +127,10 @@ pip install -e ".[dev]"
 Three commands to get running:
 
 ```bash
-pipx install token-smithers[learning]    # 1. Install
-token-smithers setup                      # 2. Pick which MCP servers to compress
-# ... use Claude Code normally ...
-token-smithers stats                      # 3. Check your savings
+pip install "token-smithers[learning] @ git+https://github.com/shacharbard/token-smithers.git@stable"
+token-smithers setup                      # Pick which MCP servers to compress
+# ... use your AI coding tool normally ...
+token-smithers stats                      # Check your savings
 ```
 
 ### Automatic setup
