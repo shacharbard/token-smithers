@@ -12,6 +12,34 @@ Like any good assistant, Smithers does the dirty work silently — and reports b
 
 **Works with any MCP client** — Claude Code, Codex, Cursor, Windsurf, Cline, or anything that speaks the MCP protocol. Not tied to any specific tool.
 
+## Which MCP Servers Should I Wrap?
+
+Each MCP server is an independent backend. Your AI coding tool talks to each one separately — they don't share traffic with each other:
+
+```
+                    ┌──→  MCP Server A  (filesystem — raw data)
+                    │
+Your AI Tool  ──────┼──→  MCP Server B  (GitHub — raw API responses)
+                    │
+                    ├──→  MCP Server C  (database — query results)
+                    │
+                    └──→  MCP Server D  (code intelligence — already optimized)
+```
+
+Token Smithers wraps **one server at a time**. You choose which ones benefit from compression:
+
+| Server type | Wrap? | Why |
+|------------|-------|-----|
+| **Filesystem / file servers** | **Yes** | Returns entire files raw — big savings |
+| **GitHub / API servers** | **Yes** | Returns verbose JSON API responses |
+| **Database / query servers** | **Yes** | Returns raw query results |
+| **General-purpose servers** | **Yes** | Most MCP servers return unoptimized data |
+| **Already-optimized servers** (e.g., jCodeMunch, jDocMunch, context-mode) | **No** | These already return minimal, targeted data — wrapping them adds overhead with little benefit |
+
+**Rule of thumb:** if the MCP server dumps raw data, wrap it. If it already returns compact, targeted results, skip it.
+
+`token-smithers setup` shows all your servers and lets you pick. You can always undo with `token-smithers setup --undo`.
+
 ## What It Does
 
 | Feature | What happens | Token savings |
