@@ -1,5 +1,0 @@
-{"ts":"2026-03-30T17:29:50Z","event":"compile_context","phase":01,"data":{"role":"lead","duration_ms":"0","delta_files":"0","cache":"miss"}}
-{"ts":"2026-03-30T17:44:01Z","event":"compile_context","phase":01,"data":{"role":"dev","duration_ms":"0","delta_files":"0","cache":"miss"}}
-{"ts":"2026-03-30T17:44:01Z","event":"compile_context","phase":01,"data":{"role":"qa","duration_ms":"0","delta_files":"0","cache":"miss"}}
-{"ts":"2026-03-30T17:45:37Z","event":"execute_phase_start","phase":01,"data":{"plan_count":"3","effort":"balanced"}}
-{"ts":"2026-03-30T18:09:44Z","event":"execute_phase_complete","phase":01,"data":{"plans_completed":"3","total_tasks":"13","total_commits":"13","deviations":"0"}}

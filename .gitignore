@@ -8,3 +8,13 @@ build/
 *.egg
 .coverage
 htmlcov/
+.DS_Store
+pytest-of-*/
+
+# Internal development artifacts (not for public repo)
+.vbw-planning/
+.planning/
+.muninn/
+CLAUDE.md
+RESEARCH.md
+adverse_code_review_*.md
