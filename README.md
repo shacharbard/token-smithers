@@ -1,0 +1,467 @@
+# token-sieve
+
+MCP compression gateway that sits between Claude Code and your backend MCP servers, transparently reducing token usage by compressing tool schemas and results.
+
+```
+Claude Code  <-->  token-sieve (proxy)  <-->  Backend MCP Server
+```
+
+token-sieve intercepts MCP traffic and applies a multi-stage compression pipeline — cleanup, content-aware compression, schema virtualization, deduplication, and caching — to reduce the tokens consumed by tool interactions. No changes to Claude Code or your backend servers required.
+
+## What It Does
+
+| Feature | What happens | Token savings |
+|---------|-------------|---------------|
+| **Cleanup layer** | Strips whitespace, null fields, redundant paths, timestamps | 10-30% |
+| **Content-aware compression** | Routes content to specialized compressors (JSON tables, logs, code, graphs) | 20-60% |
+| **Schema virtualization** | Compresses tool schemas to DietMCP one-liner notation | 60-80% |
+| **Semantic caching** | Returns cached results for similar read-only tool calls | 100% (cache hits) |
+| **Deduplication** | Detects repeated tool results within a session | 100% (dedup hits) |
+| **Progressive disclosure** | Returns summaries for oversized results, full content on demand | 83-98% |
+| **Key aliasing** | Replaces repeated long JSON keys with short aliases | 20-40% |
+| **AST skeleton** | Extracts function signatures from Python source, drops bodies | 50-80% |
+| **System prompt compression** | Compresses backend server instructions at startup | 15-30% |
+
+## Requirements
+
+- **Python 3.11+**
+- **A backend MCP server** — any MCP-compatible server that token-sieve will proxy to (e.g., filesystem, GitHub, database, or custom servers)
+
+## Installation
+
+```bash
+# Clone and install
+git clone https://github.com/yourusername/token-sieve.git
+cd token-sieve
+pip install -e ".[learning]"
+```
+
+The `learning` extra installs `aiosqlite` for cross-session learning and semantic caching. Without it, those features are disabled.
+
+Optional extras:
+
+```bash
+# For prose/documentation summarization (TextRank via sumy)
+pip install -e ".[prose]"
+
+# For development (tests, coverage)
+pip install -e ".[dev]"
+
+# All extras
+pip install -e ".[learning,prose]"
+```
+
+### Dependencies
+
+| Package | Purpose | Required? |
+|---------|---------|-----------|
+| `mcp>=1.0.0` | MCP protocol (server + client) | Yes |
+| `pyyaml>=6.0` | Config file parsing | Yes |
+| `pydantic>=2.0` | Config validation | Yes |
+| `aiosqlite>=0.20.0` | Cross-session learning, semantic cache | Optional (`learning` extra) |
+| `sumy>=0.12.0` | Prose summarization (TextRank) | Optional (`prose` extra) |
+
+## Quick Start (Automatic Setup)
+
+The fastest way to get started. The setup command finds your existing MCP servers and lets you choose which ones to compress.
+
+```bash
+token-sieve setup
+```
+
+```
+Found 2 MCP config files:
+
+  Global (~/.claude.json): 3 servers
+    1. github        npx -y @modelcontextprotocol/server-github
+    2. slack         npx -y @anthropic/server-slack
+    3. memory        npx -y @modelcontextprotocol/server-memory
+
+  Project (.mcp.json): 2 servers
+    4. filesystem    npx -y @modelcontextprotocol/server-filesystem .
+    5. my-database   my-db-server --port 5432
+
+Which servers should token-sieve compress? (comma-separated, or 'all')
+> 1,4,5
+```
+
+That's it. token-sieve:
+- Creates a config file per server in `~/.token-sieve/configs/`
+- Updates your MCP configs to route through token-sieve
+- Backs up originals to `.mcp.json.backup` / `~/.claude.json.backup`
+
+The setup scans both config locations:
+- **Project-level:** `.mcp.json` in the current directory
+- **User-level:** `~/.claude.json` (global servers available in all projects)
+
+### Undo setup
+
+To remove token-sieve and restore your original MCP server connections:
+
+```bash
+token-sieve setup --undo
+```
+
+```
+Unwrapping 3 servers:
+  github        → restored to: npx -y @modelcontextprotocol/server-github
+  filesystem    → restored to: npx -y @modelcontextprotocol/server-filesystem .
+  my-database   → restored to: my-db-server --port 5432
+
+Updated:
+  ~/.claude.json — 1 server restored
+  .mcp.json      — 2 servers restored
+```
+
+This reads the generated YAML configs to recover the original commands and rewrites your MCP configs back to direct connections. Your backup files are preserved.
+
+### Check your savings
+
+```bash
+token-sieve stats
+```
+
+```
+=== Token Sieve Session Stats ===
+  Events:     142
+  Original:   284000 tokens
+  Compressed: 156200 tokens
+  Savings:    45.0%
+
+=== Per-Strategy Breakdown ===
+  Strategy                        Count   Original Compressed
+  ------------------------------ ------ ---------- ----------
+  whitespace_normalizer              142     284000     241400
+  toon_compressor                     38     120000      54000
+  yaml_transcoder                     67      98000      73500
+  smart_truncation                    12      42000      28700
+```
+
+## Manual Setup
+
+If you prefer to configure token-sieve by hand instead of using `token-sieve setup`, here's how.
+
+### Step 1: Create a config file
+
+For each MCP server you want to compress, create a YAML config file:
+
+```yaml
+# ~/.token-sieve/configs/filesystem.yaml
+backend:
+  command: "npx"
+  args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/dir"]
+```
+
+That's the minimum. All compression features are enabled by default with sensible settings. See [Configuration](#configuration) for the full reference.
+
+### Step 2: Update your MCP config
+
+Edit your `.mcp.json` (project) or `~/.claude.json` (global) to route through token-sieve.
+
+**Before** (direct connection):
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"]
+    }
+  }
+}
+```
+
+**After** (through token-sieve):
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "token-sieve",
+      "args": ["--config", "~/.token-sieve/configs/filesystem.yaml"]
+    }
+  }
+}
+```
+
+token-sieve works with **any MCP server** — filesystem, GitHub, database, custom servers, anything that speaks the MCP protocol. Wrap each backend server you want compressed with its own config file.
+
+**Multiple servers:**
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "token-sieve",
+      "args": ["--config", "~/.token-sieve/configs/filesystem.yaml"]
+    },
+    "github": {
+      "command": "token-sieve",
+      "args": ["--config", "~/.token-sieve/configs/github.yaml"]
+    }
+  }
+}
+```
+
+### Manual undo
+
+To remove token-sieve manually, edit your MCP config and replace the token-sieve entries with the original commands. The original commands are stored in each YAML config file under `backend.command` and `backend.args`:
+
+```bash
+# Check what the original command was
+cat ~/.token-sieve/configs/filesystem.yaml
+```
+
+```yaml
+backend:
+  command: "npx"
+  args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"]
+```
+
+Then update your `.mcp.json` or `~/.claude.json` to use that command directly instead of `token-sieve`.
+
+## Configuration
+
+All settings have sensible defaults. You only need to configure `backend.command` to get started.
+
+### Full config reference
+
+```yaml
+# Backend MCP server to proxy
+backend:
+  command: "npx"                    # Command to start the backend server
+  args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+  env: {}                           # Extra environment variables
+
+# Tool filtering (passthrough by default)
+filter:
+  mode: "passthrough"               # passthrough | allowlist | blocklist
+  tools: []                         # Tool names to allow/block
+  patterns: []                      # Regex patterns to match tool names
+
+# Compression pipeline
+compression:
+  enabled: true
+  size_gate_threshold: 2000         # Skip compression for results under this token count
+  adapters:                         # Ordered list — first match wins
+    - name: whitespace_normalizer   # Always-on cleanup
+    - name: null_field_elider
+    - name: path_prefix_deduplicator
+    - name: timestamp_normalizer
+    - name: log_level_filter        # Off by default
+      enabled: false
+    - name: error_stack_compressor
+      enabled: false
+    - name: code_comment_stripper
+      enabled: false
+    - name: sentence_scorer         # Requires 'prose' extra
+      enabled: false
+    - name: rle_encoder
+    - name: toon_compressor         # JSON arrays -> columnar format
+    - name: yaml_transcoder         # Non-tabular JSON -> YAML
+    - name: file_redirect           # Oversized results -> temp file
+      enabled: false
+    - name: smart_truncation        # Safety net (always last)
+
+# Schema virtualization (DietMCP-style)
+schema_virtualization:
+  enabled: false                    # Enable to compress tool schemas
+  tier: 2                           # 1=lossless, 2=brief descriptions, 3=one-liner notation
+  frequent_call_threshold: 3        # Tools called >= N times stay at Tier 1
+
+# Semantic result caching
+semantic_cache:
+  enabled: false                    # Enable for similarity-based result caching
+  similarity_threshold: 0.85        # 0.0-1.0, higher = stricter matching
+  max_entries: 1000
+  ttl_seconds: 86400                # Cache entry lifetime (null = no expiry)
+
+# Cross-session learning
+learning:
+  enabled: true                     # SQLite persistence for usage stats + caching
+  db_path: "~/.token-sieve/learning.db"
+
+# Dashboard / metrics
+dashboard:
+  enabled: true
+  metrics_file_path: "~/.token-sieve/metrics.json"
+
+# System prompt optimization
+system_prompt:
+  enabled: true
+  compress_instructions: true       # Compress backend server instructions at startup
+
+# Statistical reranker
+reranker:
+  enabled: true                     # Reorder tools/list by usage frequency
+  max_tools: 500
+  recency_weight: 0.3
+
+# Caching
+cache:
+  schema_cache_ttl: 3600            # Tools/list cache TTL (seconds)
+  call_cache_max: 200               # Max exact-match cached results
+  diff_store_max: 100               # Max semantic diff entries
+
+# Observability
+observability:
+  metrics_to_stderr: true           # Emit [token-sieve] log lines per compression event
+  log_level: "INFO"
+```
+
+### Adapter Pipeline
+
+Compression adapters run in order. Each adapter decides if it can handle the content (`can_handle`), and if so, compresses it. Results pass through the full pipeline.
+
+| Adapter | What it does | Default |
+|---------|-------------|---------|
+| `whitespace_normalizer` | Collapses whitespace, normalizes line endings | On |
+| `null_field_elider` | Removes null/empty fields from JSON | On |
+| `path_prefix_deduplicator` | Deduplicates repeated path prefixes | On |
+| `timestamp_normalizer` | Normalizes verbose timestamps | On |
+| `log_level_filter` | Collapses verbose logs to ERROR/WARN with counts | Off |
+| `error_stack_compressor` | Deduplicates stack frames, extracts root cause | Off |
+| `code_comment_stripper` | Removes inline comments and docstrings | Off |
+| `sentence_scorer` | Extracts important sentences (TextRank, requires `prose` extra) | Off |
+| `rle_encoder` | Compacts repeated consecutive values | On |
+| `toon_compressor` | Converts uniform JSON arrays to columnar format (40-60% savings) | On |
+| `yaml_transcoder` | Converts non-tabular JSON to YAML (15-25% savings) | On |
+| `key_aliasing` | Replaces long repeated JSON keys with short aliases | On |
+| `ast_skeleton` | Extracts Python function signatures, drops bodies | On |
+| `graph_encoder` | Compacts dependency graphs to adjacency notation | On |
+| `progressive_disclosure` | Returns summary + file pointer for oversized results | On |
+| `file_redirect` | Writes oversized results to temp file, returns pointer | Off |
+| `smart_truncation` | Head+tail truncation as safety net (always last) | On |
+
+## Architecture
+
+```
+src/token_sieve/
+  domain/          # Pure Python domain core (zero external deps)
+    model.py       #   ContentEnvelope, CompressionEvent, value objects
+    ports.py       #   CompressionStrategy, DeduplicationStrategy protocols
+    pipeline.py    #   CompressionPipeline service
+    ports_cache.py #   SemanticCachePort protocol
+    ports_learning.py # LearningStore protocol
+    ports_schema.py   # SchemaVirtualizerPort protocol
+    metrics.py     #   InMemoryMetricsCollector
+  adapters/        # Implementations (external deps allowed)
+    compression/   #   17 compression strategy adapters
+    cache/         #   Call cache, semantic cache, invalidation, schema cache
+    backend/       #   MCP client transport + connector
+    learning/      #   SQLite learning store
+    schema/        #   Schema virtualizer (DietMCP notation)
+    rerank/        #   Statistical reranker + persistence
+    dedup/         #   Window-based deduplication
+  server/          # MCP proxy server
+    proxy.py       #   ProxyServer (MCP handlers, dependency wiring)
+    metrics_sink.py #  Stderr metrics formatter
+    metrics_writer.py # Periodic JSON metrics file writer
+    tool_filter.py #   Allowlist/blocklist tool filtering
+  config/          # YAML config loading + Pydantic validation
+  cli/             # CLI entry point (proxy, pipe, stats modes)
+```
+
+Hexagonal Architecture (Ports & Adapters) with DDD principles. The domain core has zero external dependencies — all I/O goes through Protocol interfaces.
+
+## Usage Examples
+
+### Proxy a filesystem server
+
+```yaml
+# token-sieve.yaml
+backend:
+  command: "npx"
+  args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/projects"]
+```
+
+### Proxy with aggressive compression
+
+```yaml
+backend:
+  command: "npx"
+  args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+
+compression:
+  adapters:
+    - name: whitespace_normalizer
+    - name: null_field_elider
+    - name: path_prefix_deduplicator
+    - name: timestamp_normalizer
+    - name: log_level_filter
+      enabled: true                  # Enable log filtering
+    - name: code_comment_stripper
+      enabled: true                  # Strip code comments
+    - name: sentence_scorer
+      enabled: true                  # Requires 'prose' extra
+    - name: rle_encoder
+    - name: toon_compressor
+    - name: yaml_transcoder
+    - name: smart_truncation
+
+schema_virtualization:
+  enabled: true
+  tier: 3                            # DietMCP one-liner notation
+
+semantic_cache:
+  enabled: true                      # Cache similar read results
+  similarity_threshold: 0.90         # Strict matching
+```
+
+### Filter tools
+
+```yaml
+backend:
+  command: "my-mcp-server"
+
+filter:
+  mode: "blocklist"
+  tools: ["dangerous_tool"]
+  patterns: ["^internal_.*"]          # Regex: block tools starting with "internal_"
+```
+
+### Pipe mode (standalone compression)
+
+```bash
+# Compress a file directly (no MCP server needed)
+cat large-output.json | token-sieve --pipe
+
+# Compress from file
+token-sieve --pipe input.txt
+```
+
+## Development
+
+```bash
+# Install with dev dependencies
+pip install -e ".[dev]"
+
+# Run tests
+pytest
+
+# Run with coverage
+pytest --cov
+
+# Run integration tests only
+pytest -m integration
+
+# Run benchmarks
+pytest -m benchmark
+```
+
+### Test stats
+
+- 933+ tests
+- 91.8% coverage
+- Unit / Integration / E2E / Contract / Golden file test pyramid
+
+## How It Works
+
+1. **Claude Code calls a tool** via MCP → token-sieve receives the request
+2. **Safety check**: Mutating tools (write, delete, create) always go to backend — never cached
+3. **Cache check**: Read-only tools checked against semantic cache for similar prior results
+4. **Backend call**: Request forwarded to your backend MCP server
+5. **Compression pipeline**: Result passes through the adapter chain (cleanup → content-specific → safety net)
+6. **Response**: Compressed result returned to Claude Code
+7. **Learning**: Usage stats and compression events recorded for cross-session optimization
+
+## License
+
+MIT
