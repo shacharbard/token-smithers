@@ -96,6 +96,26 @@ class TestDiscoverMcpConfigs:
 
         assert results == []
 
+    def test_discover_unknown_client_via_auto_scan(self, tmp_path: Path) -> None:
+        """Auto-scan finds MCP configs in unknown dotdirs."""
+        unknown_dir = tmp_path / ".warp"
+        unknown_dir.mkdir()
+        mcp_json = unknown_dir / "mcp.json"
+        data = {
+            "mcpServers": {
+                "warp-srv": {"command": "warp-mcp", "args": ["--start"]}
+            }
+        }
+        mcp_json.write_text(json.dumps(data))
+
+        with patch("token_sieve.cli.setup.Path.home", return_value=tmp_path / "fakehome"):
+            results = discover_mcp_configs(project_dir=tmp_path)
+
+        assert len(results) == 1
+        assert "warp" in results[0].scope
+        assert results[0].servers[0].name == "warp-srv"
+        assert results[0].servers[0].command == "warp-mcp"
+
 
 class TestGenerateSieveConfig:
     """generate_sieve_config produces valid YAML config content."""

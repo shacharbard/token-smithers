@@ -75,17 +75,73 @@ def _try_load_config(
         )
 
 
+# Known MCP client config locations (label → relative path from root/home).
+_KNOWN_PROJECT_CONFIGS: list[tuple[str, str]] = [
+    ("Claude Code", ".mcp.json"),
+    ("Cursor", ".cursor/mcp.json"),
+    ("Windsurf", ".windsurf/mcp.json"),
+    ("VS Code/Cline", ".vscode/mcp.json"),
+]
+
+_KNOWN_GLOBAL_CONFIGS: list[tuple[str, str]] = [
+    ("Claude Code", ".claude.json"),
+    ("Cursor", ".cursor/mcp.json"),
+    ("Windsurf", ".windsurf/mcp.json"),
+    ("Continue", ".continue/config.json"),
+    ("Codex", ".codex/mcp.json"),
+]
+
+
+def _scan_dotdirs_for_mcp(
+    root: Path, scope_prefix: str, known_paths: set[Path], configs: list["McpConfigFile"]
+) -> None:
+    """Auto-discover MCP configs in dotdirs not covered by known paths.
+
+    Scans {root}/.*/mcp.json and {root}/.*/mcp*.json for any JSON file
+    containing an "mcpServers" key. This catches new/unknown MCP clients
+    that follow the standard convention.
+    """
+    if not root.is_dir():
+        return
+    try:
+        entries = sorted(root.iterdir())
+    except OSError:
+        return
+    for entry in entries:
+        if not entry.name.startswith(".") or not entry.is_dir():
+            continue
+        # Skip common non-MCP dotdirs to avoid slow scanning
+        if entry.name in {".git", ".venv", ".env", ".cache", ".npm", ".cargo",
+                          ".local", ".ssh", ".gnupg", ".Trash", ".DS_Store",
+                          ".token-sieve", ".vbw-planning", ".planning", ".muninn"}:
+            continue
+        try:
+            candidates = sorted(entry.iterdir())
+        except OSError:
+            continue
+        for f in candidates:
+            if not f.is_file():
+                continue
+            if not (f.name == "mcp.json" or ("mcp" in f.name and f.suffix == ".json")):
+                continue
+            resolved = f.resolve()
+            if resolved in known_paths:
+                continue
+            # Derive a label from the dotdir name
+            label = entry.name.lstrip(".")
+            _try_load_config(f, f"{scope_prefix} ({label})", configs)
+            if configs and configs[-1].path == f:
+                known_paths.add(resolved)
+
+
 def discover_mcp_configs(
     project_dir: Path | None = None,
 ) -> list[McpConfigFile]:
-    """Find MCP config files across all known MCP clients.
+    """Find MCP config files across all MCP clients.
 
-    Scans project-level and global config locations for:
-    - Claude Code (.mcp.json, ~/.claude.json)
-    - Cursor (.cursor/mcp.json)
-    - Windsurf (.windsurf/mcp.json)
-    - Cline / VS Code (.vscode/mcp.json)
-    - Continue (.continue/config.json)
+    Two-pass discovery:
+    1. Check known paths for major clients (Claude Code, Cursor, Windsurf, etc.)
+    2. Auto-scan dotdirs for any unknown MCP client that uses *mcp*.json
 
     Args:
         project_dir: Directory to search for project-level configs. Defaults to cwd.
@@ -97,17 +153,26 @@ def discover_mcp_configs(
     proj_root = project_dir or Path.cwd()
     home = Path.home()
 
-    # -- Project-level configs --
-    _try_load_config(proj_root / ".mcp.json", "project (Claude Code)", configs)
-    _try_load_config(proj_root / ".cursor" / "mcp.json", "project (Cursor)", configs)
-    _try_load_config(proj_root / ".windsurf" / "mcp.json", "project (Windsurf)", configs)
-    _try_load_config(proj_root / ".vscode" / "mcp.json", "project (VS Code/Cline)", configs)
+    # Track resolved paths to avoid duplicates between known + scan
+    known_paths: set[Path] = set()
 
-    # -- Global/user-level configs --
-    _try_load_config(home / ".claude.json", "global (Claude Code)", configs)
-    _try_load_config(home / ".cursor" / "mcp.json", "global (Cursor)", configs)
-    _try_load_config(home / ".windsurf" / "mcp.json", "global (Windsurf)", configs)
-    _try_load_config(home / ".continue" / "config.json", "global (Continue)", configs)
+    # -- Pass 1: Known project-level configs --
+    for label, rel_path in _KNOWN_PROJECT_CONFIGS:
+        p = proj_root / rel_path
+        _try_load_config(p, f"project ({label})", configs)
+        if p.exists():
+            known_paths.add(p.resolve())
+
+    # -- Pass 1: Known global configs --
+    for label, rel_path in _KNOWN_GLOBAL_CONFIGS:
+        p = home / rel_path
+        _try_load_config(p, f"global ({label})", configs)
+        if p.exists():
+            known_paths.add(p.resolve())
+
+    # -- Pass 2: Auto-scan for unknown MCP clients --
+    _scan_dotdirs_for_mcp(proj_root, "project", known_paths, configs)
+    _scan_dotdirs_for_mcp(home, "global", known_paths, configs)
 
     return configs
 
