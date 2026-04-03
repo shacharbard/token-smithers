@@ -7,11 +7,16 @@ Bounded result_cache with oldest-first eviction.
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import datetime, timezone
 
 import aiosqlite
 
-from token_sieve.domain.learning_types import CooccurrenceRecord, ToolUsageRecord
+from token_sieve.domain.learning_types import (
+    CooccurrenceRecord,
+    PipelineConfig,
+    ToolUsageRecord,
+)
 from token_sieve.domain.model import CompressionEvent
 
 _SCHEMA_SQL = """\
@@ -102,13 +107,51 @@ class SQLiteLearningStore:
             "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1"
         ) as cursor:
             row = await cursor.fetchone()
-            if row is None:
+            current_version = row[0] if row else 0
+            if current_version == 0:
                 now = datetime.now(timezone.utc).isoformat()
                 await db.execute(
                     "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
                     (1, now),
                 )
                 await db.commit()
+                current_version = 1
+
+        # --- Migration v2: tool_pipeline_config + is_regret column ---
+        if current_version < 2:
+            # Add is_regret column to compression_events (idempotent check)
+            async with db.execute(
+                "PRAGMA table_info(compression_events)"
+            ) as cursor:
+                columns = [r[1] for r in await cursor.fetchall()]
+            if "is_regret" not in columns:
+                await db.execute(
+                    "ALTER TABLE compression_events "
+                    "ADD COLUMN is_regret BOOLEAN DEFAULT 0"
+                )
+
+            # Create tool_pipeline_config table
+            await db.execute(
+                """\
+                CREATE TABLE IF NOT EXISTS tool_pipeline_config (
+                    tool_name TEXT NOT NULL,
+                    server_id TEXT NOT NULL DEFAULT 'default',
+                    adapter_order TEXT NOT NULL DEFAULT '[]',
+                    disabled_adapters TEXT DEFAULT '[]',
+                    eval_count INTEGER DEFAULT 0,
+                    regret_streak INTEGER DEFAULT 0,
+                    last_eval_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (tool_name, server_id)
+                )"""
+            )
+
+            now = datetime.now(timezone.utc).isoformat()
+            await db.execute(
+                "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
+                (2, now),
+            )
+            await db.commit()
 
         return cls(db, max_cache_entries)
 
@@ -227,8 +270,9 @@ class SQLiteLearningStore:
         await self._db.execute(
             """\
             INSERT INTO compression_events
-                (session_id, tool_name, strategy_name, original_tokens, compressed_tokens, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+                (session_id, tool_name, strategy_name, original_tokens,
+                 compressed_tokens, is_regret, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
@@ -236,6 +280,7 @@ class SQLiteLearningStore:
                 event.strategy_name,
                 event.original_tokens,
                 event.compressed_tokens,
+                1 if event.is_regret else 0,
                 now,
             ),
         )
@@ -273,3 +318,84 @@ class SQLiteLearningStore:
                 )
                 for row in rows
             ]
+
+    async def get_pipeline_config(
+        self, tool_name: str, server_id: str
+    ) -> PipelineConfig | None:
+        """Get per-tool pipeline configuration, or None if not stored."""
+        async with self._db.execute(
+            "SELECT tool_name, server_id, adapter_order, disabled_adapters, "
+            "eval_count, regret_streak, last_eval_at, created_at "
+            "FROM tool_pipeline_config WHERE tool_name = ? AND server_id = ?",
+            (tool_name, server_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            return PipelineConfig(
+                tool_name=row[0],
+                server_id=row[1],
+                adapter_order=tuple(json.loads(row[2])),
+                disabled_adapters=tuple(json.loads(row[3])),
+                eval_count=row[4],
+                regret_streak=row[5],
+                last_eval_at=row[6],
+                created_at=row[7],
+            )
+
+    async def save_pipeline_config(self, config: PipelineConfig) -> None:
+        """Upsert per-tool pipeline configuration."""
+        await self._db.execute(
+            """\
+            INSERT INTO tool_pipeline_config
+                (tool_name, server_id, adapter_order, disabled_adapters,
+                 eval_count, regret_streak, last_eval_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(tool_name, server_id) DO UPDATE SET
+                adapter_order = excluded.adapter_order,
+                disabled_adapters = excluded.disabled_adapters,
+                eval_count = excluded.eval_count,
+                regret_streak = excluded.regret_streak,
+                last_eval_at = excluded.last_eval_at
+            """,
+            (
+                config.tool_name,
+                config.server_id,
+                json.dumps(list(config.adapter_order)),
+                json.dumps(list(config.disabled_adapters)),
+                config.eval_count,
+                config.regret_streak,
+                config.last_eval_at,
+                config.created_at,
+            ),
+        )
+        await self._db.commit()
+
+    async def increment_regret_streak(
+        self, tool_name: str, server_id: str
+    ) -> int:
+        """Increment regret streak counter, return new value."""
+        await self._db.execute(
+            "UPDATE tool_pipeline_config SET regret_streak = regret_streak + 1 "
+            "WHERE tool_name = ? AND server_id = ?",
+            (tool_name, server_id),
+        )
+        await self._db.commit()
+        async with self._db.execute(
+            "SELECT regret_streak FROM tool_pipeline_config "
+            "WHERE tool_name = ? AND server_id = ?",
+            (tool_name, server_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+    async def reset_regret_streak(
+        self, tool_name: str, server_id: str
+    ) -> None:
+        """Reset regret streak counter to zero."""
+        await self._db.execute(
+            "UPDATE tool_pipeline_config SET regret_streak = 0 "
+            "WHERE tool_name = ? AND server_id = ?",
+            (tool_name, server_id),
+        )
+        await self._db.commit()
