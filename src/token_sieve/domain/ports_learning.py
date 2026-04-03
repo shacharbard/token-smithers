@@ -10,7 +10,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from token_sieve.domain.learning_types import CooccurrenceRecord, ToolUsageRecord
+    from token_sieve.domain.learning_types import (
+        CooccurrenceRecord,
+        PipelineConfig,
+        ToolUsageRecord,
+    )
     from token_sieve.domain.model import CompressionEvent
 
 
@@ -59,4 +63,26 @@ class LearningStore(Protocol):
 
     async def get_cooccurrence(self, tool_name: str) -> list[CooccurrenceRecord]:
         """Get co-occurrence records for a tool."""
+        ...
+
+    async def get_pipeline_config(
+        self, tool_name: str, server_id: str
+    ) -> PipelineConfig | None:
+        """Get per-tool pipeline configuration, or None if not yet stored."""
+        ...
+
+    async def save_pipeline_config(self, config: PipelineConfig) -> None:
+        """Upsert per-tool pipeline configuration."""
+        ...
+
+    async def increment_regret_streak(
+        self, tool_name: str, server_id: str
+    ) -> int:
+        """Increment regret streak counter, return new value."""
+        ...
+
+    async def reset_regret_streak(
+        self, tool_name: str, server_id: str
+    ) -> None:
+        """Reset regret streak counter to zero."""
         ...

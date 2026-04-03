@@ -57,6 +57,26 @@ class TestLearningStoreImports:
 
         assert hasattr(LearningStore, "get_cooccurrence")
 
+    def test_protocol_has_get_pipeline_config(self) -> None:
+        from token_sieve.domain.ports_learning import LearningStore
+
+        assert hasattr(LearningStore, "get_pipeline_config")
+
+    def test_protocol_has_save_pipeline_config(self) -> None:
+        from token_sieve.domain.ports_learning import LearningStore
+
+        assert hasattr(LearningStore, "save_pipeline_config")
+
+    def test_protocol_has_increment_regret_streak(self) -> None:
+        from token_sieve.domain.ports_learning import LearningStore
+
+        assert hasattr(LearningStore, "increment_regret_streak")
+
+    def test_protocol_has_reset_regret_streak(self) -> None:
+        from token_sieve.domain.ports_learning import LearningStore
+
+        assert hasattr(LearningStore, "reset_regret_streak")
+
 
 class TestLearningTypesImports:
     """ToolUsageRecord and CooccurrenceRecord are importable frozen dataclasses."""
@@ -123,6 +143,58 @@ class TestLearningTypesImports:
         assert record.co_count == 3
         assert record.last_seen == "2026-04-01T10:00:00Z"
 
+    def test_import_pipeline_config(self) -> None:
+        from token_sieve.domain.learning_types import PipelineConfig
+
+        assert PipelineConfig is not None
+
+    def test_pipeline_config_frozen(self) -> None:
+        from token_sieve.domain.learning_types import PipelineConfig
+
+        config = PipelineConfig(
+            tool_name="read_file",
+            server_id="default",
+            adapter_order=("whitespace", "null_field"),
+            disabled_adapters=(),
+            eval_count=5,
+            regret_streak=0,
+            last_eval_at="2026-04-01T10:00:00Z",
+            created_at="2026-04-01T09:00:00Z",
+        )
+        with pytest.raises(AttributeError):
+            config.eval_count = 10  # type: ignore[misc]
+
+    def test_pipeline_config_fields(self) -> None:
+        from token_sieve.domain.learning_types import PipelineConfig
+
+        config = PipelineConfig(
+            tool_name="read_file",
+            server_id="server1",
+            adapter_order=("whitespace", "null_field"),
+            disabled_adapters=("rle",),
+            eval_count=10,
+            regret_streak=2,
+            last_eval_at="2026-04-01T10:00:00Z",
+            created_at="2026-04-01T09:00:00Z",
+        )
+        assert config.tool_name == "read_file"
+        assert config.server_id == "server1"
+        assert config.adapter_order == ("whitespace", "null_field")
+        assert config.disabled_adapters == ("rle",)
+        assert config.eval_count == 10
+        assert config.regret_streak == 2
+        assert config.last_eval_at == "2026-04-01T10:00:00Z"
+        assert config.created_at == "2026-04-01T09:00:00Z"
+
+    def test_pipeline_config_defaults(self) -> None:
+        from token_sieve.domain.learning_types import PipelineConfig
+
+        config = PipelineConfig(tool_name="t", server_id="s")
+        assert config.adapter_order == ()
+        assert config.disabled_adapters == ()
+        assert config.eval_count == 0
+        assert config.regret_streak == 0
+
 
 class TestLearningStoreStructuralSubtyping:
     """Plain class satisfying Protocol method signatures is accepted."""
@@ -131,6 +203,7 @@ class TestLearningStoreStructuralSubtyping:
         """LearningStore is @runtime_checkable, supports isinstance()."""
         from token_sieve.domain.learning_types import (
             CooccurrenceRecord,
+            PipelineConfig,
             ToolUsageRecord,
         )
         from token_sieve.domain.ports_learning import LearningStore
@@ -166,6 +239,26 @@ class TestLearningStoreStructuralSubtyping:
                 self, tool_name: str
             ) -> list[CooccurrenceRecord]:
                 return []
+
+            async def get_pipeline_config(
+                self, tool_name: str, server_id: str
+            ) -> PipelineConfig | None:
+                return None
+
+            async def save_pipeline_config(
+                self, config: PipelineConfig
+            ) -> None:
+                pass
+
+            async def increment_regret_streak(
+                self, tool_name: str, server_id: str
+            ) -> int:
+                return 1
+
+            async def reset_regret_streak(
+                self, tool_name: str, server_id: str
+            ) -> None:
+                pass
 
         assert isinstance(MockStore(), LearningStore)
 
@@ -306,3 +399,110 @@ class LearningStoreContract:
         stats = await store.get_usage_stats("server1")
         assert len(stats) == 1
         assert stats[0].tool_name == "read_file"
+
+    # --- PipelineConfig contract tests ---
+
+    async def test_get_pipeline_config_cold_start(self, store) -> None:
+        """Fresh store returns None for pipeline config."""
+        result = await store.get_pipeline_config("read_file", "default")
+        assert result is None
+
+    async def test_save_and_get_pipeline_config(self, store) -> None:
+        """Save a pipeline config, then retrieve it."""
+        from token_sieve.domain.learning_types import PipelineConfig
+
+        config = PipelineConfig(
+            tool_name="read_file",
+            server_id="server1",
+            adapter_order=("whitespace", "null_field"),
+            disabled_adapters=("rle",),
+            eval_count=5,
+            regret_streak=1,
+            last_eval_at="2026-04-01T10:00:00Z",
+            created_at="2026-04-01T09:00:00Z",
+        )
+        await store.save_pipeline_config(config)
+        retrieved = await store.get_pipeline_config("read_file", "server1")
+        assert retrieved is not None
+        assert retrieved.tool_name == "read_file"
+        assert retrieved.server_id == "server1"
+        assert retrieved.adapter_order == ("whitespace", "null_field")
+        assert retrieved.disabled_adapters == ("rle",)
+        assert retrieved.eval_count == 5
+        assert retrieved.regret_streak == 1
+
+    async def test_save_pipeline_config_upsert(self, store) -> None:
+        """Second save overwrites the first."""
+        from token_sieve.domain.learning_types import PipelineConfig
+
+        config1 = PipelineConfig(
+            tool_name="read_file",
+            server_id="default",
+            adapter_order=("a",),
+            last_eval_at="2026-04-01T10:00:00Z",
+            created_at="2026-04-01T09:00:00Z",
+        )
+        await store.save_pipeline_config(config1)
+
+        config2 = PipelineConfig(
+            tool_name="read_file",
+            server_id="default",
+            adapter_order=("a", "b"),
+            eval_count=10,
+            last_eval_at="2026-04-01T11:00:00Z",
+            created_at="2026-04-01T09:00:00Z",
+        )
+        await store.save_pipeline_config(config2)
+
+        retrieved = await store.get_pipeline_config("read_file", "default")
+        assert retrieved is not None
+        assert retrieved.adapter_order == ("a", "b")
+        assert retrieved.eval_count == 10
+
+    async def test_increment_regret_streak(self, store) -> None:
+        """Increment regret streak returns new value."""
+        from token_sieve.domain.learning_types import PipelineConfig
+
+        config = PipelineConfig(
+            tool_name="read_file",
+            server_id="default",
+            regret_streak=0,
+            last_eval_at="2026-04-01T10:00:00Z",
+            created_at="2026-04-01T09:00:00Z",
+        )
+        await store.save_pipeline_config(config)
+
+        new_streak = await store.increment_regret_streak("read_file", "default")
+        assert new_streak == 1
+
+        new_streak = await store.increment_regret_streak("read_file", "default")
+        assert new_streak == 2
+
+    async def test_reset_regret_streak(self, store) -> None:
+        """Reset regret streak sets it to zero."""
+        from token_sieve.domain.learning_types import PipelineConfig
+
+        config = PipelineConfig(
+            tool_name="read_file",
+            server_id="default",
+            regret_streak=3,
+            last_eval_at="2026-04-01T10:00:00Z",
+            created_at="2026-04-01T09:00:00Z",
+        )
+        await store.save_pipeline_config(config)
+
+        await store.reset_regret_streak("read_file", "default")
+        retrieved = await store.get_pipeline_config("read_file", "default")
+        assert retrieved is not None
+        assert retrieved.regret_streak == 0
+
+    async def test_record_compression_event_with_regret(self, store) -> None:
+        """Recording a compression event with is_regret=True does not raise."""
+        event = CompressionEvent(
+            original_tokens=50,
+            compressed_tokens=80,
+            strategy_name="whitespace_normalizer",
+            content_type=ContentType.TEXT,
+            is_regret=True,
+        )
+        await store.record_compression_event("session1", event, "read_file")

@@ -162,6 +162,14 @@ class TestCompressionEvent:
         event = make_event(content_type=ContentType.JSON)
         assert event.content_type == ContentType.JSON
 
+    def test_is_regret_defaults_false(self, make_event):
+        event = make_event()
+        assert event.is_regret is False
+
+    def test_is_regret_explicit_true(self, make_event):
+        event = make_event(is_regret=True)
+        assert event.is_regret is True
+
 
 # --- TokenBudget ---
 

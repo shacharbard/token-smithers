@@ -43,7 +43,9 @@ class WhitespaceNormalizer:
         """Parse and re-serialize JSON with minimal separators."""
         try:
             parsed = json.loads(text)
-            return json.dumps(parsed, separators=(",", ":"), ensure_ascii=False)
+            return json.dumps(
+                parsed, separators=(",", ":"), ensure_ascii=False, sort_keys=True
+            )
         except (json.JSONDecodeError, ValueError):
             return self._normalize_text(text)
 

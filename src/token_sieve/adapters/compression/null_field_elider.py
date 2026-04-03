@@ -35,7 +35,9 @@ class NullFieldElider:
             return envelope
 
         cleaned = self._elide(parsed)
-        result = json.dumps(cleaned, separators=(",", ":"), ensure_ascii=False)
+        result = json.dumps(
+            cleaned, separators=(",", ":"), ensure_ascii=False, sort_keys=True
+        )
 
         if result == envelope.content:
             return envelope

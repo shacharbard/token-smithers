@@ -34,6 +34,7 @@ def make_event():
         compressed_tokens=50,
         strategy_name="test_strategy",
         content_type=None,
+        is_regret=False,
     ):
         from token_sieve.domain.model import CompressionEvent, ContentType
 
@@ -44,6 +45,7 @@ def make_event():
             compressed_tokens=compressed_tokens,
             strategy_name=strategy_name,
             content_type=content_type,
+            is_regret=is_regret,
         )
 
     return _factory

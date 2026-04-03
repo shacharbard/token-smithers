@@ -72,6 +72,7 @@ class CompressionEvent:
     compressed_tokens: int
     strategy_name: str
     content_type: ContentType
+    is_regret: bool = False
 
     @property
     def savings_ratio(self) -> float:

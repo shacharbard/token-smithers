@@ -50,7 +50,7 @@ class YamlTranscoder:
             parsed,
             default_flow_style=False,
             allow_unicode=True,
-            sort_keys=False,
+            sort_keys=True,
         )
 
         new_metadata = dict(envelope.metadata)
