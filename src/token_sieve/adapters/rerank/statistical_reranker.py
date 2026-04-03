@@ -76,22 +76,7 @@ class StatisticalReranker:
         """
         if not self._stats:
             return
-        max_freq = max(s.call_count for s in self._stats.values())
-        max_recency = max(s.last_called_at for s in self._stats.values())
-
-        scored: list[tuple[float, str]] = []
-        for name, stats in self._stats.items():
-            norm_freq = stats.call_count / max_freq if max_freq > 0 else 0.0
-            norm_recency = (
-                stats.last_called_at / max_recency if max_recency > 0 else 0.0
-            )
-            score = (
-                (1 - self._recency_weight) * norm_freq
-                + self._recency_weight * norm_recency
-            )
-            scored.append((score, name))
-        scored.sort(key=lambda t: -t[0])
-        self._frozen_order = [name for _, name in scored]
+        self._frozen_order = self._ranked_names_from_stats()
 
     def unfreeze(self) -> None:
         """Reset frozen order, allowing recomputation on next transform()."""
@@ -121,6 +106,34 @@ class StatisticalReranker:
         self._frozen_order = [t.name for t in computed]
         return computed
 
+    def _ranked_names_from_stats(self) -> list[str]:
+        """Compute a ranked list of tool names from current stats."""
+        max_freq = max(s.call_count for s in self._stats.values())
+        max_recency = max(s.last_called_at for s in self._stats.values())
+
+        scored: list[tuple[float, str]] = []
+        for name, stats in self._stats.items():
+            score = self._score(stats, max_freq, max_recency)
+            scored.append((score, name))
+        scored.sort(key=lambda t: -t[0])
+        return [name for _, name in scored]
+
+    def _score(
+        self,
+        stats: ToolUsageStats,
+        max_freq: int,
+        max_recency: int,
+    ) -> float:
+        """Compute combined frequency+recency score for a single tool."""
+        norm_freq = stats.call_count / max_freq if max_freq > 0 else 0.0
+        norm_recency = (
+            stats.last_called_at / max_recency if max_recency > 0 else 0.0
+        )
+        return (
+            (1 - self._recency_weight) * norm_freq
+            + self._recency_weight * norm_recency
+        )
+
     def _compute_order(self, tools: list[ToolMetadata]) -> list[ToolMetadata]:
         """Compute tool order from current stats (unfrozen logic)."""
         max_freq = max(s.call_count for s in self._stats.values())
@@ -132,14 +145,7 @@ class StatisticalReranker:
         for idx, tool in enumerate(tools):
             stats = self._stats.get(tool.name)
             if stats is not None:
-                norm_freq = stats.call_count / max_freq if max_freq > 0 else 0.0
-                norm_recency = (
-                    stats.last_called_at / max_recency if max_recency > 0 else 0.0
-                )
-                score = (
-                    (1 - self._recency_weight) * norm_freq
-                    + self._recency_weight * norm_recency
-                )
+                score = self._score(stats, max_freq, max_recency)
                 scored.append((score, idx, tool))
             else:
                 unscored.append(tool)
