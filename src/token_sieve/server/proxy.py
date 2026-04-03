@@ -415,6 +415,7 @@ class ProxyServer:
                 envelope = ContentEnvelope(
                     content=item.text,
                     content_type=ContentType.TEXT,
+                    metadata={"source_tool": name},
                 )
                 compressed_envelope, events = self._pipeline.process(envelope)
 
@@ -424,8 +425,20 @@ class ProxyServer:
                     self._sink.emit(msg)
                     events_for_learning.append(event)
 
+                # Transparency footer: show compression stats
+                output_text = compressed_envelope.content
+                if events:
+                    total_original = events[0].original_tokens
+                    total_compressed = events[-1].compressed_tokens
+                    if total_compressed < total_original:
+                        output_text += (
+                            f"\n[Compressed: {total_original}\u2192"
+                            f"{total_compressed} tokens. "
+                            f"Re-call for full detail.]"
+                        )
+
                 compressed_content.append(
-                    types.TextContent(type="text", text=compressed_envelope.content)
+                    types.TextContent(type="text", text=output_text)
                 )
             else:
                 # Non-text content (images, etc.) passes through unchanged
