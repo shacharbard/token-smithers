@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from token_sieve.domain.model import CompressionEvent, ContentEnvelope, ContentType
 
@@ -39,6 +39,7 @@ class CompressionPipeline:
         self._counter = counter
         self._size_gate_threshold = size_gate_threshold
         self._routes: dict[ContentType, list[CompressionStrategy]] = {}
+        self.pipeline_config_store: Any | None = None
 
     def register(
         self, content_type: ContentType, strategy: CompressionStrategy
@@ -64,8 +65,26 @@ class CompressionPipeline:
 
         chain = self._routes.get(envelope.content_type, [])
 
+        # Per-tool filtering: skip disabled adapters if config exists
+        disabled: set[str] = set()
+        source_tool = envelope.metadata.get("source_tool") if envelope.metadata else None
+        if source_tool and self.pipeline_config_store is not None:
+            config = self.pipeline_config_store.get_pipeline_config(
+                source_tool, "default"
+            )
+            if config is not None:
+                # Re-evaluation boundary: run full chain every 50 calls
+                is_reeval = config.eval_count > 0 and config.eval_count % 50 == 0
+                if not is_reeval:
+                    disabled = set(config.disabled_adapters)
+
         for strategy in chain:
             strategy_name = type(strategy).__name__
+
+            # Skip disabled adapters for this tool
+            if strategy_name in disabled:
+                continue
+
             try:
                 if not strategy.can_handle(envelope):
                     continue
