@@ -374,3 +374,111 @@ class TestPhase04EndToEnd:
         assert result.content[0].text == "cached read result"
         # Backend should NOT have been called
         backend.call_tool.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_schema_virtualization_uses_reranker_stats_correctly(
+        self, proxy: ProxyServer
+    ) -> None:
+        """C3: _apply_schema_virtualization must read _stats (not _scores)
+        and access call_count attribute (not dict .get())."""
+        from unittest.mock import patch
+
+        # Record some usage so reranker has stats
+        for _ in range(3):
+            await proxy.handle_call_tool("read_file", {"path": "/a.py"})
+
+        # Verify reranker._stats is populated
+        assert "read_file" in proxy._reranker._stats
+        stats_obj = proxy._reranker._stats["read_file"]
+        assert stats_obj.call_count == 3
+
+        # Spy on virtualizer.virtualize to capture the usage_stats arg
+        original_virtualize = proxy._schema_virtualizer.virtualize
+        captured_kwargs = {}
+
+        def spy_virtualize(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+            return original_virtualize(*args, **kwargs)
+
+        with patch.object(proxy._schema_virtualizer, "virtualize", side_effect=spy_virtualize):
+            tools = await proxy.handle_list_tools()
+
+        assert len(tools) > 0
+        # The usage_stats dict must contain read_file with count=3
+        usage_stats = captured_kwargs.get("usage_stats")
+        assert usage_stats is not None, "usage_stats was not passed to virtualizer"
+        assert "read_file" in usage_stats, f"read_file not in usage_stats: {usage_stats}"
+        assert usage_stats["read_file"] == 3, f"Expected 3, got {usage_stats['read_file']}"
+
+    @pytest.mark.asyncio
+    async def test_semantic_cache_guarded_by_is_cacheable(
+        self, backend, tools
+    ) -> None:
+        """H2: _store_semantic_cache must only cache read-only tools."""
+        from token_sieve.adapters.compression.whitespace_normalizer import WhitespaceNormalizer
+        from token_sieve.domain.counters import CharEstimateCounter
+        from token_sieve.server.metrics_sink import StderrMetricsSink
+
+        counter = CharEstimateCounter()
+        pipeline = CompressionPipeline(counter=counter, size_gate_threshold=50)
+        pipeline.register(ContentType.TEXT, WhitespaceNormalizer())
+
+        semantic_cache = AsyncMock()
+        semantic_cache.lookup_similar = AsyncMock(return_value=None)
+        semantic_cache.cache_result = AsyncMock()
+        semantic_cache.evict_expired = AsyncMock()
+        semantic_cache.similarity_threshold = 0.85
+
+        proxy = ProxyServer(
+            backend_connector=backend,
+            tool_filter=ToolFilter(mode="passthrough"),
+            pipeline=pipeline,
+            metrics_sink=StderrMetricsSink(),
+            semantic_cache=semantic_cache,
+        )
+
+        # write_file is a mutating tool — should NOT be cached
+        await proxy.handle_call_tool("write_file", {"path": "/a.py", "content": "x"})
+        semantic_cache.cache_result.assert_not_called()
+
+        # read_file is read-only — should be cached
+        await proxy.handle_call_tool("read_file", {"path": "/a.py"})
+        semantic_cache.cache_result.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_footer_compressed_tokens_from_actual_content(
+        self, backend, tools
+    ) -> None:
+        """H4: Footer must compute compressed tokens from actual content,
+        not blindly take events[-1].compressed_tokens when regret events exist."""
+        from token_sieve.domain.counters import CharEstimateCounter
+        from token_sieve.server.metrics_sink import StderrMetricsSink
+
+        counter = CharEstimateCounter()
+        pipeline = CompressionPipeline(counter=counter, size_gate_threshold=50)
+
+        # Register a strategy that always compresses
+        from token_sieve.adapters.compression.whitespace_normalizer import WhitespaceNormalizer
+        pipeline.register(ContentType.TEXT, WhitespaceNormalizer())
+
+        proxy = ProxyServer(
+            backend_connector=backend,
+            tool_filter=ToolFilter(mode="passthrough"),
+            pipeline=pipeline,
+            metrics_sink=StderrMetricsSink(),
+        )
+
+        result = await proxy.handle_call_tool("read_file", {"path": "/a.py"})
+        text = result.content[0].text
+        # If there's a footer, the compressed token count should reflect
+        # the actual compressed content, not be wrong from regret events
+        if "[Compressed:" in text:
+            # Extract the arrow: "Compressed: X→Y tokens"
+            import re
+            match = re.search(r"\[Compressed: (\d+)→(\d+) tokens", text)
+            assert match, f"Footer format unexpected: {text}"
+            original = int(match.group(1))
+            compressed = int(match.group(2))
+            assert compressed < original, "Footer claims no savings"
+            # Compressed count should be reasonable (> 0)
+            assert compressed > 0

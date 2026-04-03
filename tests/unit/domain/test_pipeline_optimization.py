@@ -48,9 +48,12 @@ class TestPerToolFiltering:
     """Pipeline filters adapter chain based on PipelineConfig."""
 
     def test_disabled_adapters_are_skipped(self) -> None:
-        """When PipelineConfig disables an adapter, it's skipped."""
-        from token_sieve.domain.learning_types import PipelineConfig
+        """When disabled_adapters metadata is set, those adapters are skipped.
 
+        C2 fix: disabled_adapters are now passed via envelope metadata
+        (comma-separated string) by the async caller, not via
+        pipeline_config_store (which was a sync→async mismatch).
+        """
         counter = _make_counter()
         pipeline = CompressionPipeline(counter=counter)
 
@@ -61,19 +64,13 @@ class TestPerToolFiltering:
         pipeline.register(ContentType.TEXT, s2)
         pipeline.register(ContentType.TEXT, s3)
 
-        config = PipelineConfig(
-            tool_name="read_file",
-            server_id="default",
-            disabled_adapters=("SmartTruncation",),
-            eval_count=11,
-        )
-        config_store = _make_config_store(config)
-        pipeline.pipeline_config_store = config_store
-
         envelope = ContentEnvelope(
             content="x" * 200,
             content_type=ContentType.TEXT,
-            metadata={"source_tool": "read_file"},
+            metadata={
+                "source_tool": "read_file",
+                "disabled_adapters": "SmartTruncation",
+            },
         )
         pipeline.process(envelope)
 
@@ -126,9 +123,9 @@ class TestPerToolFiltering:
         s1.compress.assert_called()
 
     def test_reeval_runs_full_chain_on_boundary(self) -> None:
-        """On re-evaluation boundary (eval_count % 50 == 0), full chain runs."""
-        from token_sieve.domain.learning_types import PipelineConfig
-
+        """On re-evaluation boundary, proxy omits disabled_adapters so
+        the pipeline runs the full chain. C2 fix: re-eval logic is now
+        in the async proxy caller; pipeline just reads metadata."""
         counter = _make_counter()
         pipeline = CompressionPipeline(counter=counter)
 
@@ -137,16 +134,7 @@ class TestPerToolFiltering:
         pipeline.register(ContentType.TEXT, s1)
         pipeline.register(ContentType.TEXT, s2)
 
-        # eval_count at re-eval boundary
-        config = PipelineConfig(
-            tool_name="read_file",
-            server_id="default",
-            disabled_adapters=("SmartTruncation",),
-            eval_count=50,
-        )
-        config_store = _make_config_store(config)
-        pipeline.pipeline_config_store = config_store
-
+        # No disabled_adapters in metadata = full chain (re-eval boundary)
         envelope = ContentEnvelope(
             content="x" * 200,
             content_type=ContentType.TEXT,
@@ -154,7 +142,7 @@ class TestPerToolFiltering:
         )
         pipeline.process(envelope)
 
-        # Both should run on re-eval boundary
+        # Both should run
         s1.compress.assert_called()
         s2.compress.assert_called()
 
