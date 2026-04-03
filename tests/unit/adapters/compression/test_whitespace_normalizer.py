@@ -108,3 +108,10 @@ class TestWhitespaceNormalizerSpecific:
         # Should still be valid code structure with trailing ws stripped
         assert "def foo():" in result.content
         assert "x = 1" in result.content
+
+    def test_sort_keys_normalization(self, strategy, make_envelope):
+        """Output keys must be sorted for cache-aligned determinism."""
+        pretty = json.dumps({"zebra": 1, "alpha": 2}, indent=2)
+        envelope = make_envelope(content=pretty, content_type=ContentType.JSON)
+        result = strategy.compress(envelope)
+        assert result.content == '{"alpha":2,"zebra":1}'

@@ -118,3 +118,11 @@ class TestNullFieldEliderSpecific:
         result = strategy.compress(envelope)
         parsed = json.loads(result.content)
         assert parsed == [{"name": "Alice"}, {"name": "Bob", "age": 30}]
+
+    def test_sort_keys_normalization(self, strategy, make_envelope):
+        """Output keys must be sorted for cache-aligned determinism."""
+        content = json.dumps({"zebra": 1, "alpha": None, "mango": 2})
+        envelope = make_envelope(content=content, content_type=ContentType.JSON)
+        result = strategy.compress(envelope)
+        # After elision of alpha(None), remaining keys should be sorted
+        assert result.content == '{"mango":2,"zebra":1}'

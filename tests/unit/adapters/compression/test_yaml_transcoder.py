@@ -177,3 +177,13 @@ class TestYamlTranscoderSpecific:
         """Invalid JSON string is rejected."""
         envelope = make_envelope(content="{invalid json", content_type=ContentType.JSON)
         assert strategy.can_handle(envelope) is False
+
+    def test_sort_keys_normalization(self, strategy, make_envelope):
+        """YAML output keys must be sorted for cache-aligned determinism."""
+        data = json.dumps({"zebra": 1, "alpha": 2})
+        envelope = make_envelope(content=data, content_type=ContentType.JSON)
+        result = strategy.compress(envelope)
+        lines = result.content.strip().split("\n")
+        # Keys should appear in sorted order
+        assert lines[0] == "alpha: 2"
+        assert lines[1] == "zebra: 1"
