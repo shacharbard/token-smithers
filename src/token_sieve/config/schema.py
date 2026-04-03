@@ -81,7 +81,7 @@ class CompressionConfig(BaseModel):
     strategy: str = "passthrough"
     max_tokens: int = 4096
     dedup_window: int = 50
-    size_gate_threshold: int = 2000
+    size_gate_threshold: int = 200
     adapters: list[AdapterConfig] = Field(default_factory=_default_adapters)
 
     @field_validator("max_tokens")
@@ -173,7 +173,7 @@ class SchemaVirtualizationConfig(BaseModel):
 
     model_config = {"extra": "forbid"}
 
-    enabled: bool = False
+    enabled: bool = True
     tier: Literal[1, 2, 3] = 2
     frequent_call_threshold: int = 3
 

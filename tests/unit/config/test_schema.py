@@ -289,7 +289,7 @@ class TestCompressionConfigAdapters:
     def test_size_gate_threshold_field(self) -> None:
         """CompressionConfig has a size_gate_threshold field."""
         cfg = CompressionConfig()
-        assert cfg.size_gate_threshold == 2000
+        assert cfg.size_gate_threshold == 200
 
     def test_custom_size_gate_threshold(self) -> None:
         cfg = CompressionConfig(size_gate_threshold=5000)
@@ -461,7 +461,7 @@ class TestSchemaVirtualizationConfig:
         from token_sieve.config.schema import SchemaVirtualizationConfig
 
         cfg = SchemaVirtualizationConfig()
-        assert cfg.enabled is False
+        assert cfg.enabled is True
         assert cfg.tier == 2
         assert cfg.frequent_call_threshold == 3
 
@@ -495,7 +495,7 @@ class TestSchemaVirtualizationConfig:
         from token_sieve.config.schema import SchemaVirtualizationConfig
 
         assert isinstance(cfg.schema_virtualization, SchemaVirtualizationConfig)
-        assert cfg.schema_virtualization.enabled is False
+        assert cfg.schema_virtualization.enabled is True
 
 
 class TestSystemPromptConfig:
@@ -595,6 +595,6 @@ class TestPhase04ConfigYamlRoundTrip:
         cfg = TokenSieveConfig(backend={"transport": "stdio"})
         assert cfg.learning.enabled is True
         assert cfg.dashboard.enabled is True
-        assert cfg.schema_virtualization.enabled is False
+        assert cfg.schema_virtualization.enabled is True
         assert cfg.system_prompt.enabled is True
         assert cfg.semantic_cache.enabled is False
