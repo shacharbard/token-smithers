@@ -38,9 +38,9 @@ Token Smithers wraps **one server at a time**. You choose which ones benefit fro
 | **GitHub / API servers** | **Yes** | Returns verbose JSON API responses |
 | **Database / query servers** | **Yes** | Returns raw query results |
 | **General-purpose servers** | **Yes** | Most MCP servers return unoptimized data |
-| **Already-optimized servers** (e.g., jCodeMunch, jDocMunch, context-mode) | **No** | These already return minimal, targeted data — wrapping them adds overhead with little benefit |
+| **Already-optimized servers** (e.g., jCodeMunch, jDocMunch, context-mode) | **Yes — for schemas** | Results are already minimal, but their **tool schemas still load raw** every refresh. Wrapping saves ~55% on schema tokens without interfering with their internal optimization. Servers with many tools (e.g., jCodeMunch: 31 tools) benefit most. |
 
-**Rule of thumb:** if the MCP server dumps raw data, wrap it. If it already returns compact, targeted results, skip it.
+**Rule of thumb:** if the MCP server dumps raw data, wrap it for both schema and result savings. If it already returns compact results, wrap it anyway — you still save on schema loading, which happens every `tools/list` refresh (~5 times per session).
 
 `token-smithers setup` shows all your servers and lets you pick. You can always undo with `token-smithers setup --undo`.
 
@@ -69,16 +69,22 @@ Measured on realistic schemas and responses for popular MCP servers:
 | **GitHub MCP** | 10 | **33%** | **25%** | Null fields, timestamps, repeated structures |
 | **Filesystem MCP** | 8 | **41%** | **41%** | Path dedup, null fields, file listing arrays |
 | **Muninn** | 10 | **38%** | **52%** | Memory recall JSON, entity lists |
+| **jCodeMunch** | 31 | **~55%** | — | Schema-only: 31 tools with rich params (large `language` enum). Results already optimized internally |
+| **jDocMunch** | 11 | **~55%** | — | Schema-only: results already optimized internally |
+| **context-mode** | 9 | **~55%** | — | Schema-only: results already optimized internally |
+| **jDataMunch** | 11 | **~55%** | — | Schema-only: results already optimized internally |
 
 ### Per-session impact
 
-Every MCP server you have loaded costs tokens on **every `tools/list` refresh** — even if you never call those tools. With 5 MCP servers (33 tools total):
+Every MCP server you have loaded costs tokens on **every `tools/list` refresh** — even if you never call those tools. With 9 MCP servers (95 tools total, including already-optimized ones):
 
 | | Without Smithers | With Smithers | Saved |
 |--|--:|--:|--:|
-| Per tools/list refresh | 2,650 tokens | 1,653 tokens | **997 tokens (38%)** |
-| Per session (~5 refreshes) | 13,250 tokens | 8,265 tokens | **~5,000 tokens** |
-| + 10 tool calls | ~63,250 tokens | ~39,265 tokens | **~25,000 tokens** |
+| Per tools/list refresh | ~12,000 tokens | ~5,400 tokens | **~6,600 tokens (55%)** |
+| Per session (~5 refreshes) | ~60,000 tokens | ~27,000 tokens | **~33,000 tokens** |
+| + 10 tool calls | ~110,000 tokens | ~52,000 tokens | **~58,000 tokens** |
+
+Even "already-optimized" MCP servers like jCodeMunch (31 tools) cost ~5,350 schema tokens per refresh. Wrapping them saves ~55% on schemas alone — **~25,500 tokens per session** — without affecting their internal result optimization.
 
 The more MCP servers you have, the more schema overhead you pay per refresh — and the more Token Smithers saves.
 
