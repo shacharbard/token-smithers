@@ -17,7 +17,7 @@ from mcp.server.lowlevel import Server
 from mcp.server.models import InitializationOptions
 
 from token_sieve.config.schema import TokenSieveConfig
-from token_sieve.domain.model import ContentEnvelope, ContentType
+from token_sieve.domain.model import CompressionEvent, ContentEnvelope, ContentType
 from token_sieve.domain.pipeline import CompressionPipeline
 from token_sieve.server.metrics_sink import StderrMetricsSink
 from token_sieve.server.tool_filter import ToolFilter
@@ -181,7 +181,9 @@ class ProxyServer:
 
         # Schema virtualization: compress tool schemas after reranking
         if self._schema_virtualizer is not None:
+            pre_virtualized = filtered
             filtered = self._apply_schema_virtualization(filtered)
+            await self._log_schema_savings(pre_virtualized, filtered)
 
         return filtered
 
@@ -217,6 +219,43 @@ class ProxyServer:
             )
             for vt in virtualized
         ]
+
+    async def _log_schema_savings(
+        self,
+        original: list[types.Tool],
+        virtualized: list[types.Tool],
+    ) -> None:
+        """Log schema virtualization savings to the learning store."""
+        if self._learning_store is None:
+            return
+        import json
+
+        orig_size = sum(
+            len(json.dumps({"name": t.name, "description": t.description or "",
+                            "inputSchema": t.inputSchema or {}}, separators=(",", ":")))
+            for t in original
+        )
+        virt_size = sum(
+            len(json.dumps({"name": t.name, "description": t.description or "",
+                            "inputSchema": t.inputSchema or {}}, separators=(",", ":")))
+            for t in virtualized
+        )
+        orig_tokens = max(1, orig_size // 4)
+        virt_tokens = max(1, virt_size // 4) if virt_size > 0 else 0
+        if orig_tokens <= virt_tokens:
+            return
+        event = CompressionEvent(
+            original_tokens=orig_tokens,
+            compressed_tokens=virt_tokens,
+            strategy_name="SchemaVirtualization",
+            content_type=ContentType.SCHEMA,
+        )
+        try:
+            await self._learning_store.record_compression_event(
+                "session", event, "__schema__"
+            )
+        except Exception:
+            pass
 
     async def _check_semantic_cache(
         self, name: str, arguments: dict[str, Any]

@@ -1198,3 +1198,133 @@ class TestLearningStoreRetry:
         # After reset, 2 more failures should still be tolerated
         # (not disabled because counter was reset by the success)
         assert proxy._learning_store is not None
+
+
+# ---------------------------------------------------------------------------
+# Schema virtualization logging
+# ---------------------------------------------------------------------------
+
+
+class TestSchemaVirtualizationLogging:
+    """handle_list_tools logs schema compression events to learning store."""
+
+    @pytest.mark.anyio
+    async def test_schema_virtualization_logs_compression_event(self) -> None:
+        """When schema virtualizer compresses tools, a CompressionEvent is recorded."""
+        from token_sieve.server.proxy import ProxyServer
+
+        tools = [
+            types.Tool(
+                name="search",
+                description="Search for documents by query string",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search query"},
+                        "limit": {"type": "integer", "description": "Max results"},
+                    },
+                    "required": ["query"],
+                },
+            ),
+        ]
+        connector = _make_fake_connector(tools=tools)
+        filt = MagicMock()
+        filt.filter_tools = MagicMock(return_value=tools)
+        pipeline = _make_fake_pipeline()
+        sink = _make_fake_sink()
+
+        # Fake virtualizer that returns a compact version
+        virtualizer = MagicMock()
+        virtualizer.virtualize.return_value = [
+            {
+                "name": "search",
+                "description": "search(query:str, limit?:int)",
+                "inputSchema": {"type": "object"},
+            }
+        ]
+
+        learning_store = AsyncMock()
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=filt,
+            pipeline=pipeline,
+            metrics_sink=sink,
+            schema_virtualizer=virtualizer,
+            learning_store=learning_store,
+        )
+
+        await proxy.handle_list_tools()
+
+        # Learning store should have received a compression event
+        learning_store.record_compression_event.assert_awaited_once()
+        call_args = learning_store.record_compression_event.call_args
+        session_id = call_args[0][0]
+        event = call_args[0][1]
+        tool_name = call_args[0][2]
+
+        assert isinstance(event, CompressionEvent)
+        assert event.strategy_name == "SchemaVirtualization"
+        assert event.content_type == ContentType.SCHEMA
+        assert event.original_tokens > event.compressed_tokens
+        assert event.original_tokens > 0
+        assert tool_name == "__schema__"
+
+    @pytest.mark.anyio
+    async def test_no_logging_without_virtualizer(self) -> None:
+        """Without schema virtualizer, no schema compression event is logged."""
+        from token_sieve.server.proxy import ProxyServer
+
+        tools = [_make_tool("foo")]
+        connector = _make_fake_connector(tools=tools)
+        filt = MagicMock()
+        filt.filter_tools = MagicMock(return_value=tools)
+        pipeline = _make_fake_pipeline()
+        sink = _make_fake_sink()
+        learning_store = AsyncMock()
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=filt,
+            pipeline=pipeline,
+            metrics_sink=sink,
+            learning_store=learning_store,
+        )
+
+        await proxy.handle_list_tools()
+
+        learning_store.record_compression_event.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_schema_logging_error_does_not_crash(self) -> None:
+        """If learning store fails during schema logging, list_tools still works."""
+        from token_sieve.server.proxy import ProxyServer
+
+        tools = [_make_tool("foo")]
+        connector = _make_fake_connector(tools=tools)
+        filt = MagicMock()
+        filt.filter_tools = MagicMock(return_value=tools)
+        pipeline = _make_fake_pipeline()
+        sink = _make_fake_sink()
+
+        virtualizer = MagicMock()
+        virtualizer.virtualize.return_value = [
+            {"name": "foo", "description": "f()", "inputSchema": {"type": "object"}}
+        ]
+
+        learning_store = AsyncMock()
+        learning_store.record_compression_event.side_effect = OSError("disk full")
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=filt,
+            pipeline=pipeline,
+            metrics_sink=sink,
+            schema_virtualizer=virtualizer,
+            learning_store=learning_store,
+        )
+
+        # Should not raise
+        result = await proxy.handle_list_tools()
+        assert len(result) == 1
+        assert result[0].name == "foo"
