@@ -110,14 +110,19 @@ class CompressionPipeline:
                 )
                 continue
 
+            is_regret = compressed_tokens > original_tokens
             events.append(
                 CompressionEvent(
                     original_tokens=original_tokens,
                     compressed_tokens=compressed_tokens,
                     strategy_name=strategy_name,
                     content_type=envelope.content_type,
+                    is_regret=is_regret,
                 )
             )
+            if is_regret:
+                # Revert: don't apply this strategy's output
+                continue
             envelope = compressed_envelope
 
         return envelope, events
