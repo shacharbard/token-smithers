@@ -259,3 +259,92 @@ class TestIsFrozenProperty:
         reranker.transform([_tool("alpha")])
         reranker.unfreeze()
         assert reranker.is_frozen is False
+
+
+# ---------------------------------------------------------------------------
+# Edge cases: cold start, single tool, max_tools boundary
+# ---------------------------------------------------------------------------
+
+
+class TestColdStartFreeze:
+    """When reranker has no stats (cold start), first transform() freezes input order."""
+
+    def test_cold_start_freezes_input_order(self) -> None:
+        reranker = StatisticalReranker()
+        tools = [_tool("c"), _tool("a"), _tool("b")]
+
+        result = reranker.transform(tools)
+
+        # With no stats, input order is preserved and frozen
+        assert [t.name for t in result] == ["c", "a", "b"]
+        assert reranker.is_frozen is True
+        assert reranker._frozen_order == ["c", "a", "b"]
+
+    def test_cold_start_frozen_order_stable(self) -> None:
+        reranker = StatisticalReranker()
+        tools = [_tool("c"), _tool("a"), _tool("b")]
+
+        first = reranker.transform(tools)
+
+        # Record calls after freeze -- should not change order
+        reranker.record_call("b")
+        reranker.record_call("b")
+        reranker.record_call("b")
+
+        second = reranker.transform(tools)
+        assert [t.name for t in first] == [t.name for t in second]
+
+
+class TestSingleToolFreeze:
+    """Freeze works correctly with a single tool."""
+
+    def test_single_tool_freezes(self) -> None:
+        reranker = StatisticalReranker()
+        reranker.record_call("only")
+
+        result = reranker.transform([_tool("only")])
+        assert [t.name for t in result] == ["only"]
+        assert reranker.is_frozen is True
+
+    def test_single_tool_cold_start(self) -> None:
+        reranker = StatisticalReranker()
+        result = reranker.transform([_tool("only")])
+        assert [t.name for t in result] == ["only"]
+        assert reranker.is_frozen is True
+
+
+class TestMaxToolsBoundaryFreeze:
+    """Freeze works at the max_tools boundary (500+ tools)."""
+
+    def test_freeze_with_many_tools(self) -> None:
+        reranker = StatisticalReranker(max_tools=500)
+
+        # Record calls for 500 tools
+        for i in range(500):
+            reranker.record_call(f"tool_{i:04d}")
+
+        tools = [_tool(f"tool_{i:04d}") for i in range(500)]
+        # Add some beyond max
+        tools.extend([_tool(f"extra_{i}") for i in range(10)])
+
+        first = reranker.transform(tools)
+        first_names = [t.name for t in first]
+
+        # Record more calls after freeze
+        for i in range(10):
+            reranker.record_call(f"extra_{i}")
+
+        second = reranker.transform(tools)
+        second_names = [t.name for t in second]
+
+        assert first_names == second_names
+        assert len(first_names) == 510
+
+    def test_empty_tool_list(self) -> None:
+        reranker = StatisticalReranker()
+        reranker.record_call("alpha")
+
+        result = reranker.transform([])
+        assert result == []
+        # Empty list should not freeze
+        assert reranker.is_frozen is False
