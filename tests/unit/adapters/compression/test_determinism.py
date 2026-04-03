@@ -497,3 +497,49 @@ class TestTempfileDeterminism:
         )
         # Verify deterministic content-hash-based path
         assert "token-sieve-prog-" in results[0]
+
+
+class TestSentenceScorerDeterminism:
+    """Verify SentenceScorer (TextRank) produces deterministic output."""
+
+    @pytest.mark.skipif(
+        not _SUMY_AVAILABLE, reason="sumy not installed"
+    )
+    def test_textrank_determinism_5_calls(self):
+        """TextRank-based compression must be deterministic across 5 calls."""
+        envelope = ContentEnvelope(
+            content=_PROSE_CONTENT, content_type=ContentType.TEXT
+        )
+        adapter = SentenceScorer(sentence_count=3, algorithm="textrank")
+        assert adapter.can_handle(envelope), (
+            "SentenceScorer should handle prose content"
+        )
+
+        results = [adapter.compress(envelope).content for _ in range(5)]
+        for i in range(1, 5):
+            assert results[0] == results[i], (
+                f"TextRank non-deterministic on call {i+1}:\n"
+                f"  call 1: {results[0][:100]}...\n"
+                f"  call {i+1}: {results[i][:100]}..."
+            )
+
+    @pytest.mark.skipif(
+        not _SUMY_AVAILABLE, reason="sumy not installed"
+    )
+    def test_lsa_determinism_5_calls(self):
+        """LSA-based compression must be deterministic across 5 calls."""
+        envelope = ContentEnvelope(
+            content=_PROSE_CONTENT, content_type=ContentType.TEXT
+        )
+        adapter = SentenceScorer(sentence_count=3, algorithm="lsa")
+        assert adapter.can_handle(envelope), (
+            "SentenceScorer should handle prose content"
+        )
+
+        results = [adapter.compress(envelope).content for _ in range(5)]
+        for i in range(1, 5):
+            assert results[0] == results[i], (
+                f"LSA non-deterministic on call {i+1}:\n"
+                f"  call 1: {results[0][:100]}...\n"
+                f"  call {i+1}: {results[i][:100]}..."
+            )
