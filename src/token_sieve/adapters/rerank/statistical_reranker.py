@@ -45,6 +45,7 @@ class StatisticalReranker:
         self._recency_weight = recency_weight
         self._stats: dict[str, ToolUsageStats] = {}
         self._call_counter: int = 0
+        self._frozen_order: list[str] | None = None
 
     def record_call(self, tool_name: str) -> None:
         """Record that a tool was called."""
@@ -61,14 +62,67 @@ class StatisticalReranker:
             )
             self._evict_if_needed()
 
+    @property
+    def is_frozen(self) -> bool:
+        """Whether the tool order is currently frozen."""
+        return self._frozen_order is not None
+
+    def freeze(self) -> None:
+        """Freeze the current computed order from stats.
+
+        Sets ``_frozen_order`` to the tool name ranking derived from current
+        stats. Subsequent ``transform()`` calls will use this order instead of
+        recomputing.
+        """
+        if not self._stats:
+            return
+        max_freq = max(s.call_count for s in self._stats.values())
+        max_recency = max(s.last_called_at for s in self._stats.values())
+
+        scored: list[tuple[float, str]] = []
+        for name, stats in self._stats.items():
+            norm_freq = stats.call_count / max_freq if max_freq > 0 else 0.0
+            norm_recency = (
+                stats.last_called_at / max_recency if max_recency > 0 else 0.0
+            )
+            score = (
+                (1 - self._recency_weight) * norm_freq
+                + self._recency_weight * norm_recency
+            )
+            scored.append((score, name))
+        scored.sort(key=lambda t: -t[0])
+        self._frozen_order = [name for _, name in scored]
+
+    def unfreeze(self) -> None:
+        """Reset frozen order, allowing recomputation on next transform()."""
+        self._frozen_order = None
+
     def transform(self, tools: list[ToolMetadata]) -> list[ToolMetadata]:
         """Reorder tools by usage score (most-used first).
 
-        Tools without stats retain their original relative order at the end.
+        On the first call, computes the order and freezes it. Subsequent calls
+        return tools in the frozen order. Tools not in the frozen order are
+        appended at the end, preserving their relative input order.
         """
-        if not self._stats or not tools:
+        if not tools:
             return list(tools)
 
+        # If frozen, apply the frozen order
+        if self._frozen_order is not None:
+            return self._apply_frozen_order(tools)
+
+        # No stats: freeze input order as-is (cold start)
+        if not self._stats:
+            self._frozen_order = [t.name for t in tools]
+            return list(tools)
+
+        # Compute order from stats
+        computed = self._compute_order(tools)
+        self._frozen_order = [t.name for t in computed]
+        return computed
+
+    def _compute_order(self, tools: list[ToolMetadata]) -> list[ToolMetadata]:
+        """Compute tool order from current stats (unfrozen logic)."""
         max_freq = max(s.call_count for s in self._stats.values())
         max_recency = max(s.last_called_at for s in self._stats.values())
 
@@ -90,11 +144,32 @@ class StatisticalReranker:
             else:
                 unscored.append(tool)
 
-        # Sort scored tools by score descending; stable sort preserves
-        # insertion order for equal scores (use negative index as tiebreak).
         scored.sort(key=lambda t: (-t[0], t[1]))
-
         return [t for _, _, t in scored] + unscored
+
+    def _apply_frozen_order(self, tools: list[ToolMetadata]) -> list[ToolMetadata]:
+        """Reorder tools according to the frozen order.
+
+        Tools in the frozen order are placed first (in frozen order).
+        Tools not in the frozen order are appended at the end, preserving
+        their relative input order.
+        """
+        frozen_set = set(self._frozen_order)  # type: ignore[arg-type]
+        tool_by_name: dict[str, ToolMetadata] = {t.name: t for t in tools}
+        input_names = {t.name for t in tools}
+
+        result: list[ToolMetadata] = []
+        # Add frozen tools that are present in input, in frozen order
+        for name in self._frozen_order:  # type: ignore[union-attr]
+            if name in input_names:
+                result.append(tool_by_name[name])
+
+        # Add non-frozen tools in their original input order
+        for tool in tools:
+            if tool.name not in frozen_set:
+                result.append(tool)
+
+        return result
 
     def reset_stats(self) -> None:
         """Clear all usage tracking data."""
