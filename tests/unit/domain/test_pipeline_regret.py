@@ -91,9 +91,11 @@ class TestNegativeCompressionDetection:
         assert events[0].is_regret is False
 
     def test_regret_reverts_envelope(self) -> None:
-        """Expanding strategy's output is reverted — envelope unchanged."""
+        """Expanding strategy's output is reverted when config store is active."""
         counter = _make_counter()
         pipeline = CompressionPipeline(counter=counter)
+        pipeline.pipeline_config_store = MagicMock()
+        pipeline.pipeline_config_store.get_pipeline_config = MagicMock(return_value=None)
 
         expander = _make_expanding_strategy("BadAdapter")
         shrinker = _make_shrinking_strategy("GoodAdapter")
@@ -115,9 +117,11 @@ class TestNegativeCompressionDetection:
         assert len(result.content) < len(original_content)
 
     def test_multiple_regrets_all_reverted(self) -> None:
-        """Multiple expanding strategies are all reverted."""
+        """Multiple expanding strategies are all reverted when config store active."""
         counter = _make_counter()
         pipeline = CompressionPipeline(counter=counter)
+        pipeline.pipeline_config_store = MagicMock()
+        pipeline.pipeline_config_store.get_pipeline_config = MagicMock(return_value=None)
 
         e1 = _make_expanding_strategy("Expander1")
         e2 = _make_expanding_strategy("Expander2")

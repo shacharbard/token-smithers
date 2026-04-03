@@ -120,8 +120,8 @@ class CompressionPipeline:
                     is_regret=is_regret,
                 )
             )
-            if is_regret:
-                # Revert: don't apply this strategy's output
+            if is_regret and self.pipeline_config_store is not None:
+                # Revert: don't apply this strategy's output when tracking is active
                 continue
             envelope = compressed_envelope
 
