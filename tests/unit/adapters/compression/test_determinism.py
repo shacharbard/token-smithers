@@ -474,6 +474,8 @@ class TestTempfileDeterminism:
             f"  call 2: {results[1][:80]}...\n"
             f"  call 3: {results[2][:80]}..."
         )
+        # Verify deterministic content-hash-based path
+        assert "token-sieve-" in results[0]
 
     def test_progressive_disclosure_stable_output(self, tmp_path):
         """ProgressiveDisclosure must produce identical output for identical content."""
@@ -493,3 +495,5 @@ class TestTempfileDeterminism:
             f"  call 2: {results[1][:80]}...\n"
             f"  call 3: {results[2][:80]}..."
         )
+        # Verify deterministic content-hash-based path
+        assert "token-sieve-prog-" in results[0]

@@ -11,6 +11,7 @@ Satisfies CompressionStrategy protocol structurally.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import os
 import tempfile
 
@@ -49,21 +50,17 @@ class FileRedirectStrategy:
         content_bytes = envelope.content.encode("utf-8")
         byte_count = len(content_bytes)
 
-        # Write to temp file (delete=False so file persists)
-        f = tempfile.NamedTemporaryFile(
-            mode="wb",
-            suffix=".txt",
-            prefix="token-sieve-",
-            dir=self._output_dir,
-            delete=False,
-        )
-        try:
-            f.write(content_bytes)
-        finally:
-            f.close()
+        # Deterministic filename based on content hash for cache alignment:
+        # identical content always produces the same file path.
+        content_hash = hashlib.sha256(content_bytes).hexdigest()[:12]
+        out_dir = self._output_dir or tempfile.gettempdir()
+        file_path = os.path.join(out_dir, f"token-sieve-{content_hash}.txt")
 
-        self._created_files.append(f.name)
-        pointer = f"Result written to {f.name}, {byte_count} bytes"
+        with open(file_path, "wb") as f:
+            f.write(content_bytes)
+
+        self._created_files.append(file_path)
+        pointer = f"Result written to {file_path}, {byte_count} bytes"
         return dataclasses.replace(envelope, content=pointer)
 
     def cleanup(self) -> None:

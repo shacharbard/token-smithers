@@ -10,6 +10,7 @@ Satisfies CompressionStrategy protocol structurally.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import os
 import stat
 import tempfile
@@ -56,31 +57,29 @@ class ProgressiveDisclosureStrategy:
         # Generate summary
         summary = self._generate_summary(content)
 
-        # Write full content to temp file
-        f = tempfile.NamedTemporaryFile(
-            mode="wb",
-            suffix=".txt",
-            prefix="token-sieve-prog-",
-            dir=self._output_dir,
-            delete=False,
+        # Deterministic filename based on content hash for cache alignment:
+        # identical content always produces the same file path.
+        content_hash = hashlib.sha256(content_bytes).hexdigest()[:12]
+        out_dir = self._output_dir or tempfile.gettempdir()
+        file_path = os.path.join(
+            out_dir, f"token-sieve-prog-{content_hash}.txt"
         )
-        try:
+
+        with open(file_path, "wb") as f:
             f.write(content_bytes)
-        finally:
-            f.close()
 
-        # Restrict to owner-only access (0o600) — defense-in-depth
+        # Restrict to owner-only access (0o600) -- defense-in-depth
         # against permissive umask on some Linux configurations.
-        os.chmod(f.name, stat.S_IRUSR | stat.S_IWUSR)
+        os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)
 
-        self._created_files.append(f.name)
+        self._created_files.append(file_path)
 
         # Build structured envelope
         result = (
             f"[token-sieve/progressive]\n"
             f"Summary: {summary}\n"
-            f"Full result: {f.name} ({byte_count} bytes)\n"
-            f'To read: call read_file("{f.name}")'
+            f"Full result: {file_path} ({byte_count} bytes)\n"
+            f'To read: call read_file("{file_path}")'
         )
 
         return dataclasses.replace(envelope, content=result)
