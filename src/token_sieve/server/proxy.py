@@ -69,6 +69,7 @@ class ProxyServer:
         self._learning_store = learning_store
         self._learning_store_failures: int = 0
         self._semantic_cache = semantic_cache
+        self._evict_counter: int = 0
         self._metrics_collector = metrics_collector
         self._metrics_writer = metrics_writer
         self._server = self._build_mcp_server()
@@ -266,13 +267,12 @@ class ProxyServer:
         self, name: str, arguments: dict[str, Any]
     ) -> types.CallToolResult | None:
         """Check semantic cache for a similar prior result."""
-        from token_sieve.adapters.cache.param_normalizer import (
-            compute_args_hash,
-            normalize_args,
-        )
+        from token_sieve.adapters.cache.param_normalizer import normalize_args
 
-        # F4: Run TTL eviction before lookup
-        await self._semantic_cache.evict_expired()
+        # F4: Run TTL eviction periodically (every 50 cache checks)
+        self._evict_counter += 1
+        if self._evict_counter % 50 == 0:
+            await self._semantic_cache.evict_expired()
 
         args_normalized = normalize_args(arguments)
         # F3: Use configured threshold instead of hardcoded 0.85
@@ -777,10 +777,6 @@ class ProxyServer:
             metrics_collector=metrics_collector,
             metrics_writer=metrics_writer,
         )
-
-        # Self-tuning interval (calls between threshold adjustments)
-        proxy._self_tune_interval = 50
-        proxy._self_tune_call_count = 0
 
         return proxy
 
