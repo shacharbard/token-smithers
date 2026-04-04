@@ -353,15 +353,153 @@ def write_config(config_file: McpConfigFile) -> None:
     os.rename(str(tmp_path), str(config_file.path))
 
 
-def run_setup(undo: bool = False) -> int:
+# --- Hook installation ---
+
+# Token-sieve PreToolUse hook entries to install in settings.json.
+_HOOK_MARKER = "token-sieve"
+
+_HOOK_ENTRIES: list[dict] = [
+    {
+        "matcher": "Grep",
+        "hooks": [
+            {
+                "type": "command",
+                "command": f"echo 'token-sieve: consider jCodeMunch search_symbols for code definitions'",
+            }
+        ],
+    },
+    {
+        "matcher": "Glob",
+        "hooks": [
+            {
+                "type": "command",
+                "command": f"echo 'token-sieve: consider jCodeMunch get_file_tree for broad patterns'",
+            }
+        ],
+    },
+    {
+        "matcher": "Read",
+        "hooks": [
+            {
+                "type": "command",
+                "command": f"echo 'token-sieve: consider jCodeMunch get_symbol for targeted code reads'",
+            }
+        ],
+    },
+    {
+        "matcher": "Bash",
+        "hooks": [
+            {
+                "type": "command",
+                "command": f"echo 'token-sieve: consider ctx_execute for large output commands'",
+            }
+        ],
+    },
+]
+
+
+def install_hooks(
+    settings_path: Path, undo: bool = False
+) -> list[str]:
+    """Install or remove token-sieve PreToolUse hook entries in settings.json.
+
+    Args:
+        settings_path: Path to Claude Code settings.json.
+        undo: If True, remove token-sieve entries instead of adding.
+
+    Returns:
+        List of installed (or removed) hook matcher names.
+    """
+    import os
+
+    # Read existing settings
+    if settings_path.exists():
+        try:
+            data = json.loads(settings_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            data = {}
+    else:
+        data = {}
+
+    if "hooks" not in data:
+        data["hooks"] = {}
+    if "PreToolUse" not in data["hooks"]:
+        data["hooks"]["PreToolUse"] = []
+
+    existing: list[dict] = data["hooks"]["PreToolUse"]
+
+    if undo:
+        # Remove token-sieve entries
+        removed = []
+        filtered = []
+        for entry in existing:
+            is_ts = any(
+                _HOOK_MARKER in str(h.get("command", ""))
+                for h in entry.get("hooks", [])
+            )
+            if is_ts:
+                removed.append(entry.get("matcher", "unknown"))
+            else:
+                filtered.append(entry)
+        data["hooks"]["PreToolUse"] = filtered
+        _atomic_write(settings_path, data)
+        return removed
+
+    # Install: add entries that don't already exist
+    installed = []
+    for hook_entry in _HOOK_ENTRIES:
+        # Check if already present (by matcher + token-sieve marker)
+        already = any(
+            e.get("matcher") == hook_entry["matcher"]
+            and any(
+                _HOOK_MARKER in str(h.get("command", ""))
+                for h in e.get("hooks", [])
+            )
+            for e in existing
+        )
+        if not already:
+            existing.append(hook_entry)
+            installed.append(hook_entry["matcher"])
+
+    _atomic_write(settings_path, data)
+    return installed
+
+
+def _atomic_write(path: Path, data: dict) -> None:
+    """Write JSON data atomically using tmp+rename pattern."""
+    import os
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(data, indent=2) + "\n")
+    os.rename(str(tmp_path), str(path))
+
+
+def run_setup(undo: bool = False, install_hooks_flag: bool = False) -> int:
     """Interactive setup runner.
 
     Args:
         undo: If True, unwrap all token-sieve wrapped servers.
+        install_hooks_flag: If True, install PreToolUse hooks.
 
     Returns:
         0 on success, 1 on error.
     """
+    import os
+
+    if install_hooks_flag:
+        settings_path_str = os.environ.get(
+            "TOKEN_SIEVE_SETTINGS_PATH",
+            os.path.expanduser("~/.claude/settings.json"),
+        )
+        settings_path = Path(settings_path_str)
+        installed = install_hooks(settings_path)
+        if installed:
+            print(f"Installed {len(installed)} hook(s): {', '.join(installed)}")
+        else:
+            print("All hooks already installed.")
+        return 0
+
     configs = discover_mcp_configs()
     if not configs:
         print(

@@ -346,7 +346,7 @@ class TestMainRouting:
 
         called_with: dict = {}
 
-        def fake_run_setup(undo: bool = False) -> int:
+        def fake_run_setup(undo: bool = False, install_hooks_flag: bool = False) -> int:
             called_with["undo"] = undo
             return 0
 
@@ -365,7 +365,7 @@ class TestMainRouting:
     ) -> None:
         called_with: dict = {}
 
-        def fake_run_setup(undo: bool = False) -> int:
+        def fake_run_setup(undo: bool = False, install_hooks_flag: bool = False) -> int:
             called_with["undo"] = undo
             return 0
 

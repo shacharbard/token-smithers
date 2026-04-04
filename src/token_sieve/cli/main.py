@@ -366,7 +366,8 @@ def main(argv: list[str] | None = None) -> int:
         from token_sieve.cli.setup import run_setup
 
         undo = "--undo" in effective_argv
-        return run_setup(undo=undo)
+        install_hooks_flag = "--install-hooks" in effective_argv
+        return run_setup(undo=undo, install_hooks_flag=install_hooks_flag)
 
     if effective_argv and effective_argv[0] == "estimate":
         from token_sieve.cli.estimate import run_estimate
