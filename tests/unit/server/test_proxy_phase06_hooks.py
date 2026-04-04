@@ -86,10 +86,10 @@ class TestDefaultAdapterOrderPhase06:
             f"tree_sitter_ast (idx={ast_idx})"
         )
 
-    def test_both_disabled_by_default(self) -> None:
-        """Both Phase 06 adapters should be disabled by default."""
+    def test_both_enabled_by_default(self) -> None:
+        """Both Phase 06 adapters should be enabled by default (they have can_handle guards)."""
         from token_sieve.config.schema import _default_adapters
 
         adapters = {a.name: a for a in _default_adapters()}
-        assert adapters["json_code_unwrapper"].enabled is False
-        assert adapters["tree_sitter_ast"].enabled is False
+        assert adapters["json_code_unwrapper"].enabled is True
+        assert adapters["tree_sitter_ast"].enabled is True
