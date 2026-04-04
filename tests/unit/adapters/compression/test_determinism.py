@@ -768,3 +768,53 @@ class TestSchemaVirtualizerDeterminism:
         nested_keys_b = list(schema_b["properties"]["outer_z"]["properties"].keys())
         assert nested_keys_a == nested_keys_b
         assert nested_keys_a == sorted(nested_keys_a)
+
+
+class TestToonCompressorDeterminism:
+    """ToonCompressor must produce identical output for shuffled JSON keys."""
+
+    def test_sorted_column_keys(self):
+        """TOON header columns must be sorted regardless of input key order."""
+        array_a = json.dumps([
+            {"name": "Alice", "age": 30, "city": "NYC"},
+            {"name": "Bob", "age": 25, "city": "LA"},
+        ], indent=2)
+        array_b = json.dumps([
+            {"city": "NYC", "age": 30, "name": "Alice"},
+            {"city": "LA", "age": 25, "name": "Bob"},
+        ], indent=2)
+
+        adapter = ToonCompressor()
+        env_a = ContentEnvelope(content=array_a, content_type=ContentType.JSON)
+        env_b = ContentEnvelope(content=array_b, content_type=ContentType.JSON)
+
+        result_a = adapter.compress(env_a).content
+        result_b = adapter.compress(env_b).content
+        assert result_a == result_b, (
+            f"ToonCompressor output differs for shuffled keys:\n"
+            f"  A: {result_a}\n"
+            f"  B: {result_b}"
+        )
+
+    def test_byte_identical_for_shuffled_keys(self):
+        """Two arrays with same data but different key order produce identical compressed output."""
+        array_a = json.dumps([
+            {"zebra": 1, "apple": 2, "mango": 3},
+            {"zebra": 4, "apple": 5, "mango": 6},
+        ])
+        array_b = json.dumps([
+            {"apple": 2, "mango": 3, "zebra": 1},
+            {"apple": 5, "mango": 6, "zebra": 4},
+        ])
+
+        adapter = ToonCompressor()
+        env_a = ContentEnvelope(content=array_a, content_type=ContentType.JSON)
+        env_b = ContentEnvelope(content=array_b, content_type=ContentType.JSON)
+
+        result_a = adapter.compress(env_a).content
+        result_b = adapter.compress(env_b).content
+        assert result_a == result_b, (
+            f"ToonCompressor not byte-identical for shuffled keys:\n"
+            f"  A: {result_a}\n"
+            f"  B: {result_b}"
+        )

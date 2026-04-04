@@ -83,8 +83,8 @@ class ToonCompressor:
         if not self.is_uniform_array(data):
             return None
 
-        # Use stable key order from first dict
-        keys = list(data[0].keys())
+        # Sort keys for deterministic output (cache alignment)
+        keys = sorted(data[0].keys())
         return keys, data
 
     @staticmethod

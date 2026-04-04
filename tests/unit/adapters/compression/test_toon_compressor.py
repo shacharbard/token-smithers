@@ -98,7 +98,7 @@ class TestToonCompressorSpecific:
         result = strategy.compress(envelope)
 
         lines = result.content.strip().split("\n")
-        assert lines[0] == "name\tsize"  # header row with keys
+        assert lines[0] == "name\tsize"  # header row with keys (sorted)
         assert lines[1] == "foo\t100"
         assert lines[2] == "bar\t200"
 
@@ -137,7 +137,7 @@ class TestToonCompressorSpecific:
         result = strategy.compress(envelope)
 
         lines = result.content.strip().split("\n")
-        assert lines[0] == "name\tinfo"
+        assert lines[0] == "info\tname"  # sorted column order
         # Nested objects become compact JSON strings
         assert "foo" in lines[1]
         assert '{"a": 1}' in lines[1]
@@ -189,7 +189,7 @@ class TestToonCompressorSpecific:
         result = strategy.compress(envelope)
 
         lines = result.content.strip().split("\n")
-        assert lines[0] == "name\tactive"
+        assert lines[0] == "active\tname"  # sorted column order
         assert "True" in lines[1]
         assert "False" in lines[2]
 
