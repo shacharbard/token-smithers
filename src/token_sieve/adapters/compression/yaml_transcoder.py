@@ -11,11 +11,11 @@ double-transformation.
 from __future__ import annotations
 
 import dataclasses
-import json
-from typing import Any
 
 import yaml
 
+from token_sieve.adapters.compression._json_utils import try_parse_json
+from token_sieve.adapters.compression.toon_compressor import ToonCompressor
 from token_sieve.domain.model import ContentEnvelope
 
 
@@ -30,19 +30,19 @@ class YamlTranscoder:
         if envelope.metadata.get("transformed_by"):
             return False
 
-        parsed = self._try_parse_json(envelope.content)
+        parsed = try_parse_json(envelope.content)
         if parsed is None:
             return False
 
         # Defer uniform arrays to ToonCompressor (better savings)
-        if self._is_toon_eligible(parsed):
+        if ToonCompressor.is_uniform_array(parsed):
             return False
 
         return True
 
     def compress(self, envelope: ContentEnvelope) -> ContentEnvelope:
         """Convert JSON content to YAML format."""
-        parsed = self._try_parse_json(envelope.content)
+        parsed = try_parse_json(envelope.content)
         if parsed is None:
             return envelope
 
@@ -61,29 +61,3 @@ class YamlTranscoder:
             content=yaml_content,
             metadata=new_metadata,
         )
-
-    @staticmethod
-    def _try_parse_json(content: str) -> Any | None:
-        """Try to parse content as JSON. Returns parsed data or None."""
-        try:
-            return json.loads(content)
-        except (json.JSONDecodeError, TypeError):
-            return None
-
-    @staticmethod
-    def _is_toon_eligible(data: Any) -> bool:
-        """Check if data is a uniform array eligible for ToonCompressor.
-
-        Uniform = list of 2+ dicts with identical key sets.
-        """
-        if not isinstance(data, list) or len(data) < 2:
-            return False
-
-        if not all(isinstance(item, dict) for item in data):
-            return False
-
-        first_keys = set(data[0].keys())
-        if not first_keys:
-            return False
-
-        return all(set(item.keys()) == first_keys for item in data[1:])

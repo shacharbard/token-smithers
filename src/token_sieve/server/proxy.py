@@ -72,6 +72,8 @@ class ProxyServer:
         self._evict_counter: int = 0
         self._metrics_collector = metrics_collector
         self._metrics_writer = metrics_writer
+        self._virtualized_cache_key: tuple[str, ...] | None = None
+        self._virtualized_cache_result: list[types.Tool] | None = None
         self._server = self._build_mcp_server()
 
     def rebind_connector(self, connector: Any) -> None:
@@ -80,6 +82,8 @@ class ProxyServer:
         Called by _run_proxy after the real backend session is established.
         """
         self._connector = connector
+        self._virtualized_cache_key = None
+        self._virtualized_cache_result = None
         if self._schema_cache is not None:
             self._schema_cache._provider = connector
             self._schema_cache.invalidate()
@@ -182,8 +186,13 @@ class ProxyServer:
 
         # Schema virtualization: compress tool schemas after reranking
         if self._schema_virtualizer is not None:
+            tools_key = tuple(t.name for t in filtered)
+            if self._virtualized_cache_key == tools_key:
+                return self._virtualized_cache_result  # type: ignore[return-value]
             pre_virtualized = filtered
             filtered = self._apply_schema_virtualization(filtered)
+            self._virtualized_cache_key = tools_key
+            self._virtualized_cache_result = filtered
             await self._log_schema_savings(pre_virtualized, filtered)
 
         return filtered
@@ -837,6 +846,12 @@ class _DeferredLearningStore:
     ) -> None:
         store = await self._ensure_connected()
         await store.record_compression_event(session_id, event, tool_name)
+
+    async def record_compression_events_batch(
+        self, session_id: str, events: list, tool_name: str
+    ) -> None:
+        store = await self._ensure_connected()
+        await store.record_compression_events_batch(session_id, events, tool_name)
 
     async def get_usage_stats(self, server_id: str) -> list:
         store = await self._ensure_connected()

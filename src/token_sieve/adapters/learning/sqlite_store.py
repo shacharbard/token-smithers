@@ -6,12 +6,12 @@ Bounded result_cache with oldest-first eviction.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from datetime import datetime, timezone
 
 import aiosqlite
 
+from token_sieve.adapters.cache.semantic_cache import compute_args_hash_from_normalized
 from token_sieve.domain.learning_types import (
     CooccurrenceRecord,
     PipelineConfig,
@@ -197,9 +197,7 @@ class SQLiteLearningStore:
         self, tool_name: str, args_normalized: str, result: str
     ) -> None:
         """Cache a tool result. Evicts oldest entries when over capacity."""
-        args_hash = hashlib.sha256(
-            (tool_name + args_normalized).encode()
-        ).hexdigest()
+        args_hash = compute_args_hash_from_normalized(args_normalized)
         now = datetime.now(timezone.utc).isoformat()
 
         # Upsert: if same tool+hash exists, update; otherwise insert
@@ -240,9 +238,7 @@ class SQLiteLearningStore:
         The threshold parameter is accepted for Protocol conformance
         but not yet used in matching logic.
         """
-        args_hash = hashlib.sha256(
-            (tool_name + args_normalized).encode()
-        ).hexdigest()
+        args_hash = compute_args_hash_from_normalized(args_normalized)
 
         async with self._db.execute(
             "SELECT result_text FROM result_cache "
@@ -285,6 +281,40 @@ class SQLiteLearningStore:
             ),
         )
         await self._db.commit()
+
+    async def record_compression_events_batch(
+        self,
+        session_id: str,
+        events: list[CompressionEvent],
+        tool_name: str,
+    ) -> None:
+        """Record multiple compression events in a single transaction."""
+        if not events:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            for event in events:
+                await self._db.execute(
+                    """\
+                    INSERT INTO compression_events
+                        (session_id, tool_name, strategy_name, original_tokens,
+                         compressed_tokens, is_regret, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        session_id,
+                        tool_name,
+                        event.strategy_name,
+                        event.original_tokens,
+                        event.compressed_tokens,
+                        1 if event.is_regret else 0,
+                        now,
+                    ),
+                )
+            await self._db.commit()
+        except Exception:
+            await self._db.rollback()
+            raise
 
     async def record_cooccurrence(self, tool_a: str, tool_b: str) -> None:
         """Record that two tools were called together."""

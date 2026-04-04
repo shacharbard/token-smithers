@@ -1337,3 +1337,75 @@ class TestSchemaVirtualizationLogging:
         result = await proxy.handle_list_tools()
         assert len(result) == 1
         assert result[0].name == "foo"
+
+
+class TestSchemaVirtualizationCaching:
+    """Fix 3: Schema virtualization results should be cached."""
+
+    @pytest.mark.anyio
+    async def test_virtualization_cached_on_second_call(self) -> None:
+        """Second list_tools call with same tools should not re-virtualize."""
+        from token_sieve.server.proxy import ProxyServer
+
+        tools = [_make_tool("foo"), _make_tool("bar")]
+        connector = _make_fake_connector(tools=tools)
+        filt = MagicMock()
+        filt.filter_tools = MagicMock(return_value=tools)
+        pipeline = _make_fake_pipeline()
+        sink = _make_fake_sink()
+
+        virtualizer = MagicMock()
+        virtualizer.virtualize.return_value = [
+            {"name": "foo", "description": "foo", "inputSchema": {"type": "object"}},
+            {"name": "bar", "description": "bar", "inputSchema": {"type": "object"}},
+        ]
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=filt,
+            pipeline=pipeline,
+            metrics_sink=sink,
+            schema_virtualizer=virtualizer,
+        )
+
+        result1 = await proxy.handle_list_tools()
+        result2 = await proxy.handle_list_tools()
+
+        # Virtualizer should be called only once (cache hit on second call)
+        assert virtualizer.virtualize.call_count == 1
+        assert len(result1) == len(result2)
+
+    @pytest.mark.anyio
+    async def test_cache_invalidated_on_rebind(self) -> None:
+        """rebind_connector should clear the virtualization cache."""
+        from token_sieve.server.proxy import ProxyServer
+
+        tools = [_make_tool("foo")]
+        connector = _make_fake_connector(tools=tools)
+        filt = MagicMock()
+        filt.filter_tools = MagicMock(return_value=tools)
+        pipeline = _make_fake_pipeline()
+        sink = _make_fake_sink()
+
+        virtualizer = MagicMock()
+        virtualizer.virtualize.return_value = [
+            {"name": "foo", "description": "foo", "inputSchema": {"type": "object"}},
+        ]
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=filt,
+            pipeline=pipeline,
+            metrics_sink=sink,
+            schema_virtualizer=virtualizer,
+        )
+
+        await proxy.handle_list_tools()
+        assert virtualizer.virtualize.call_count == 1
+
+        # Rebind should clear cache
+        new_connector = _make_fake_connector(tools=tools)
+        proxy.rebind_connector(new_connector)
+
+        await proxy.handle_list_tools()
+        assert virtualizer.virtualize.call_count == 2

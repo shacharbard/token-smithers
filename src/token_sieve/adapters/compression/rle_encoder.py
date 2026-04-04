@@ -10,10 +10,10 @@ Lossless -- the notation is unambiguous and preserves all information.
 from __future__ import annotations
 
 import dataclasses
-import json
 from itertools import groupby
 from typing import Any
 
+from token_sieve.adapters.compression._json_utils import try_parse_json
 from token_sieve.domain.model import ContentEnvelope
 
 _MIN_REPEAT = 3
@@ -77,11 +77,7 @@ class RunLengthEncoder:
     @staticmethod
     def _try_parse_json_array(content: str) -> list[Any] | None:
         """Try to parse content as a JSON array of scalars."""
-        try:
-            data = json.loads(content)
-        except (json.JSONDecodeError, TypeError):
-            return None
-
+        data = try_parse_json(content)
         if not isinstance(data, list):
             return None
 

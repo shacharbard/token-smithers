@@ -11,14 +11,13 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import re
 from collections import Counter
 
+from token_sieve.adapters.compression._json_utils import (
+    JSON_START_RE as _JSON_START_RE,
+    try_parse_json,
+)
 from token_sieve.domain.model import ContentEnvelope
-
-
-# Graph-key patterns that signal structured data
-_JSON_START_RE = re.compile(r"^\s*[\[{]")
 
 
 class KeyAliasingStrategy:
@@ -45,9 +44,8 @@ class KeyAliasingStrategy:
         if not _JSON_START_RE.match(content):
             return False
 
-        try:
-            parsed = json.loads(content)
-        except (json.JSONDecodeError, ValueError):
+        parsed = try_parse_json(content)
+        if parsed is None:
             return False
 
         key_counts = Counter()
@@ -61,9 +59,8 @@ class KeyAliasingStrategy:
     def compress(self, envelope: ContentEnvelope) -> ContentEnvelope:
         """Alias qualifying keys and prepend alias header."""
         content = envelope.content.strip()
-        try:
-            parsed = json.loads(content)
-        except (json.JSONDecodeError, ValueError):
+        parsed = try_parse_json(content)
+        if parsed is None:
             return envelope
 
         # Collect key frequencies
