@@ -209,7 +209,7 @@ class SemanticCacheConfig(BaseModel):
     similarity_threshold: float = 1.0  # exact-match only; fuzzy disabled (30% false-hit rate)
     max_entries: int = 1000
     ttl_seconds: int | None = None
-    embedder: str | None = None  # Optional embedder backend (e.g. "model2vec")
+    embedder: str | None = None  # Embedder backend for cosine similarity (e.g. "model2vec"); None=SequenceMatcher
 
 
 class TokenSieveConfig(BaseModel):
@@ -235,8 +235,8 @@ class TokenSieveConfig(BaseModel):
     )
     system_prompt: SystemPromptConfig = Field(default_factory=SystemPromptConfig)
     semantic_cache: SemanticCacheConfig = Field(default_factory=SemanticCacheConfig)
-    compaction_warning_threshold: int = 80000  # Cumulative compressed tokens before warning
-    model: str = "claude-sonnet-4-5"  # Default model for cost estimation
+    compaction_warning_threshold: int = 80000  # Cumulative compressed tokens before one-time warning (~40% of 200K context)
+    model: str = "claude-sonnet-4-5"  # Model name for tokencost pricing in stats/estimate commands
 
 
 def load_config(path: Path) -> TokenSieveConfig:
