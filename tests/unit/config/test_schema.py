@@ -295,6 +295,13 @@ class TestCompressionConfigAdapters:
         cfg = CompressionConfig(size_gate_threshold=5000)
         assert cfg.size_gate_threshold == 5000
 
+    def test_phase06_adapters_enabled_by_default(self) -> None:
+        """json_code_unwrapper and tree_sitter_ast should be enabled by default."""
+        cfg = CompressionConfig()
+        adapter_map = {a.name: a for a in cfg.adapters}
+        assert adapter_map["json_code_unwrapper"].enabled is True
+        assert adapter_map["tree_sitter_ast"].enabled is True
+
     def test_backward_compatibility_no_adapters(self) -> None:
         """Config without adapters key uses default adapter list."""
         cfg = CompressionConfig(enabled=True, strategy="passthrough")
