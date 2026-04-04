@@ -104,6 +104,10 @@ class SchemaVirtualizer:
             if isinstance(prop_def, dict):
                 self._cleanup_property(prop_def)
 
+        # Sort property keys for deterministic output (cache alignment)
+        if props:
+            schema["properties"] = dict(sorted(props.items()))
+
         return schema
 
     def _cleanup_property(self, prop: dict) -> None:
@@ -125,6 +129,9 @@ class SchemaVirtualizer:
         for nested_def in nested_props.values():
             if isinstance(nested_def, dict):
                 self._cleanup_property(nested_def)
+        # Sort nested property keys for deterministic output
+        if nested_props:
+            prop["properties"] = dict(sorted(nested_props.items()))
 
         # Recurse into items (arrays) -- only if items has its own structure
         items_def = prop.get("items")

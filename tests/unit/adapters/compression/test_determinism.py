@@ -61,6 +61,7 @@ from token_sieve.adapters.compression.whitespace_normalizer import (
     WhitespaceNormalizer,
 )
 from token_sieve.adapters.compression.yaml_transcoder import YamlTranscoder
+from token_sieve.adapters.schema.schema_virtualizer import SchemaVirtualizer
 from token_sieve.domain.model import ContentEnvelope, ContentType
 
 
@@ -675,3 +676,95 @@ class TestTreeSitterMultiLanguageDeterminism:
             assert results[0] == results[i], (
                 f"Go non-deterministic on call {i+1}"
             )
+
+
+class TestSchemaVirtualizerDeterminism:
+    """SchemaVirtualizer must produce identical output for shuffled input keys."""
+
+    def _make_tool(self, properties: dict) -> dict:
+        return {
+            "name": "test_tool",
+            "description": "A test tool",
+            "inputSchema": {
+                "type": "object",
+                "properties": properties,
+            },
+        }
+
+    def test_tier1_sorted_property_keys(self):
+        """Tier 1 output has sorted property keys regardless of input order."""
+        props_a = {"zebra": {"type": "string"}, "apple": {"type": "integer"}, "mango": {"type": "boolean"}}
+        props_b = {"apple": {"type": "integer"}, "mango": {"type": "boolean"}, "zebra": {"type": "string"}}
+
+        virt = SchemaVirtualizer()
+        result_a = virt.virtualize([self._make_tool(props_a)], tier=1)
+        virt2 = SchemaVirtualizer()
+        result_b = virt2.virtualize([self._make_tool(props_b)], tier=1)
+
+        keys_a = list(result_a[0]["inputSchema"]["properties"].keys())
+        keys_b = list(result_b[0]["inputSchema"]["properties"].keys())
+        assert keys_a == keys_b, (
+            f"Tier 1 property keys differ for shuffled input:\n"
+            f"  input A order -> {keys_a}\n"
+            f"  input B order -> {keys_b}"
+        )
+        assert keys_a == sorted(keys_a), f"Keys not sorted: {keys_a}"
+
+    def test_tier2_sorted_property_keys(self):
+        """Tier 2 output has sorted property keys regardless of input order."""
+        props_a = {"zebra": {"type": "string", "description": "Z field"}, "apple": {"type": "integer", "description": "A field"}}
+        props_b = {"apple": {"type": "integer", "description": "A field"}, "zebra": {"type": "string", "description": "Z field"}}
+
+        virt = SchemaVirtualizer()
+        result_a = virt.virtualize([self._make_tool(props_a)], tier=2)
+        virt2 = SchemaVirtualizer()
+        result_b = virt2.virtualize([self._make_tool(props_b)], tier=2)
+
+        keys_a = list(result_a[0]["inputSchema"]["properties"].keys())
+        keys_b = list(result_b[0]["inputSchema"]["properties"].keys())
+        assert keys_a == keys_b, (
+            f"Tier 2 property keys differ for shuffled input:\n"
+            f"  input A order -> {keys_a}\n"
+            f"  input B order -> {keys_b}"
+        )
+
+    def test_tier3_sorted_property_keys(self):
+        """Tier 3 DietMCP output is identical for shuffled property keys."""
+        props_a = {"zebra": {"type": "string"}, "apple": {"type": "integer"}, "mango": {"type": "boolean"}}
+        props_b = {"mango": {"type": "boolean"}, "zebra": {"type": "string"}, "apple": {"type": "integer"}}
+
+        virt = SchemaVirtualizer()
+        result_a = virt.virtualize([self._make_tool(props_a)], tier=3)
+        virt2 = SchemaVirtualizer()
+        result_b = virt2.virtualize([self._make_tool(props_b)], tier=3)
+
+        assert result_a[0] == result_b[0], (
+            f"Tier 3 output differs for shuffled keys:\n"
+            f"  A: {result_a[0]}\n"
+            f"  B: {result_b[0]}"
+        )
+
+    def test_nested_properties_sorted(self):
+        """Nested object properties are also sorted."""
+        nested_a = {
+            "outer_z": {"type": "object", "properties": {"inner_b": {"type": "string"}, "inner_a": {"type": "integer"}}},
+            "outer_a": {"type": "string"},
+        }
+        nested_b = {
+            "outer_a": {"type": "string"},
+            "outer_z": {"type": "object", "properties": {"inner_a": {"type": "integer"}, "inner_b": {"type": "string"}}},
+        }
+
+        virt = SchemaVirtualizer()
+        result_a = virt.virtualize([self._make_tool(nested_a)], tier=1)
+        virt2 = SchemaVirtualizer()
+        result_b = virt2.virtualize([self._make_tool(nested_b)], tier=1)
+
+        schema_a = result_a[0]["inputSchema"]
+        schema_b = result_b[0]["inputSchema"]
+        assert list(schema_a["properties"].keys()) == list(schema_b["properties"].keys())
+        # Check nested keys too
+        nested_keys_a = list(schema_a["properties"]["outer_z"]["properties"].keys())
+        nested_keys_b = list(schema_b["properties"]["outer_z"]["properties"].keys())
+        assert nested_keys_a == nested_keys_b
+        assert nested_keys_a == sorted(nested_keys_a)
