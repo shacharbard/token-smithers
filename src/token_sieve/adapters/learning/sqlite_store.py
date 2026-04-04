@@ -6,12 +6,12 @@ Bounded result_cache with oldest-first eviction.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from datetime import datetime, timezone
 
 import aiosqlite
 
+from token_sieve.adapters.cache.semantic_cache import compute_args_hash_from_normalized
 from token_sieve.domain.learning_types import (
     CooccurrenceRecord,
     PipelineConfig,
@@ -197,9 +197,7 @@ class SQLiteLearningStore:
         self, tool_name: str, args_normalized: str, result: str
     ) -> None:
         """Cache a tool result. Evicts oldest entries when over capacity."""
-        args_hash = hashlib.sha256(
-            (tool_name + args_normalized).encode()
-        ).hexdigest()
+        args_hash = compute_args_hash_from_normalized(args_normalized)
         now = datetime.now(timezone.utc).isoformat()
 
         # Upsert: if same tool+hash exists, update; otherwise insert
@@ -240,9 +238,7 @@ class SQLiteLearningStore:
         The threshold parameter is accepted for Protocol conformance
         but not yet used in matching logic.
         """
-        args_hash = hashlib.sha256(
-            (tool_name + args_normalized).encode()
-        ).hexdigest()
+        args_hash = compute_args_hash_from_normalized(args_normalized)
 
         async with self._db.execute(
             "SELECT result_text FROM result_cache "
