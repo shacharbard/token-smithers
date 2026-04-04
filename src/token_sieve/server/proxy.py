@@ -626,6 +626,14 @@ class ProxyServer:
             "token_sieve.adapters.compression.progressive_disclosure",
             "ProgressiveDisclosureStrategy",
         ),
+        "test_output_compressor": (
+            "token_sieve.adapters.compression.test_output_compressor",
+            "TestOutputCompressor",
+        ),
+        "bm25_sentence_selector": (
+            "token_sieve.adapters.compression.bm25_sentence_selector",
+            "BM25SentenceSelector",
+        ),
     }
 
     @classmethod

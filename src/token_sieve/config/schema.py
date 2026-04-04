@@ -56,13 +56,16 @@ def _default_adapters() -> list[AdapterConfig]:
         AdapterConfig(name="path_prefix_deduplicator"),
         AdapterConfig(name="timestamp_normalizer"),
         # Content-specific lossy (off by default)
+        AdapterConfig(name="test_output_compressor", enabled=True),
         AdapterConfig(name="log_level_filter", enabled=False),
         AdapterConfig(name="error_stack_compressor", enabled=False),
         AdapterConfig(name="code_comment_stripper", enabled=False),
         AdapterConfig(name="json_code_unwrapper", enabled=True),
         AdapterConfig(name="tree_sitter_ast", enabled=True),
-        # Sentence scorer + RLE
+        AdapterConfig(name="progressive_disclosure", enabled=False),
+        # Sentence scorer + BM25 + RLE
         AdapterConfig(name="sentence_scorer", enabled=False),
+        AdapterConfig(name="bm25_sentence_selector", enabled=False),
         AdapterConfig(name="rle_encoder"),
         # Format transforms (mutually exclusive via transformed_by)
         AdapterConfig(name="toon_compressor"),

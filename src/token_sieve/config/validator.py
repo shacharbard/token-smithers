@@ -25,6 +25,7 @@ CONTENT_SPECIFIC = frozenset({
     "log_level_filter",
     "error_stack_compressor",
     "code_comment_stripper",
+    "test_output_compressor",
     "progressive_disclosure",
     "graph_encoder",
     "key_aliasing",
@@ -36,6 +37,7 @@ FORMAT = frozenset({
     "toon_compressor",
     "yaml_transcoder",
     "sentence_scorer",
+    "bm25_sentence_selector",
     "rle_encoder",
     "file_redirect",
 })
