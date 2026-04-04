@@ -61,6 +61,12 @@ CREATE TABLE IF NOT EXISTS tool_cooccurrence (
     PRIMARY KEY (tool_a, tool_b)
 );
 
+CREATE TABLE IF NOT EXISTS reranker_state (
+    server_id TEXT PRIMARY KEY,
+    frozen_order TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY,
     applied_at TEXT NOT NULL
@@ -150,6 +156,25 @@ class SQLiteLearningStore:
             await db.execute(
                 "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
                 (2, now),
+            )
+            await db.commit()
+
+        # --- Migration v3: reranker_state table for frozen order ---
+        if current_version < 3:
+            # Table already created by _SCHEMA_SQL for new DBs;
+            # CREATE TABLE IF NOT EXISTS is idempotent for existing DBs.
+            await db.execute(
+                """\
+                CREATE TABLE IF NOT EXISTS reranker_state (
+                    server_id TEXT PRIMARY KEY,
+                    frozen_order TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )"""
+            )
+            now = datetime.now(timezone.utc).isoformat()
+            await db.execute(
+                "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
+                (3, now),
             )
             await db.commit()
 
@@ -429,3 +454,31 @@ class SQLiteLearningStore:
             (tool_name, server_id),
         )
         await self._db.commit()
+
+    async def save_frozen_order(
+        self, server_id: str, order: list[str]
+    ) -> None:
+        """Persist reranker frozen tool order for a server."""
+        now = datetime.now(timezone.utc).isoformat()
+        await self._db.execute(
+            """\
+            INSERT INTO reranker_state (server_id, frozen_order, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(server_id) DO UPDATE SET
+                frozen_order = excluded.frozen_order,
+                updated_at = excluded.updated_at
+            """,
+            (server_id, json.dumps(order), now),
+        )
+        await self._db.commit()
+
+    async def load_frozen_order(self, server_id: str) -> list[str] | None:
+        """Load persisted frozen tool order, or None if not stored."""
+        async with self._db.execute(
+            "SELECT frozen_order FROM reranker_state WHERE server_id = ?",
+            (server_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            return json.loads(row[0])

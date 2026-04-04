@@ -57,6 +57,15 @@ class RerankerPersistence:
             # Advance counter so each tool gets a unique recency value
             reranker._call_counter += 1
 
+        # Restore frozen order if available
+        try:
+            if hasattr(learning_store, "load_frozen_order"):
+                frozen = await learning_store.load_frozen_order(server_id)
+                if frozen is not None:
+                    reranker._frozen_order = frozen
+        except Exception:
+            logger.debug("bootstrap: failed to load frozen order", exc_info=True)
+
     async def persist_call(
         self,
         learning_store: LearningStore,

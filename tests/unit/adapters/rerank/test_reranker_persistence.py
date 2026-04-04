@@ -56,6 +56,16 @@ class FakeLearningStore:
     ) -> list[CooccurrenceRecord]:
         return []
 
+    async def save_frozen_order(
+        self, server_id: str, order: list[str]
+    ) -> None:
+        self._frozen_orders = getattr(self, "_frozen_orders", {})
+        self._frozen_orders[server_id] = order
+
+    async def load_frozen_order(self, server_id: str) -> list[str] | None:
+        self._frozen_orders = getattr(self, "_frozen_orders", {})
+        return self._frozen_orders.get(server_id)
+
 
 @pytest.fixture
 def fake_store() -> FakeLearningStore:

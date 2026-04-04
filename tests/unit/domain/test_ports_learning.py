@@ -260,6 +260,16 @@ class TestLearningStoreStructuralSubtyping:
             ) -> None:
                 pass
 
+            async def save_frozen_order(
+                self, server_id: str, order: list[str]
+            ) -> None:
+                pass
+
+            async def load_frozen_order(
+                self, server_id: str
+            ) -> list[str] | None:
+                return None
+
         assert isinstance(MockStore(), LearningStore)
 
     def test_missing_method_not_instance(self) -> None:

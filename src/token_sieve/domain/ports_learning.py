@@ -86,3 +86,13 @@ class LearningStore(Protocol):
     ) -> None:
         """Reset regret streak counter to zero."""
         ...
+
+    async def save_frozen_order(
+        self, server_id: str, order: list[str]
+    ) -> None:
+        """Persist reranker frozen tool order for a server."""
+        ...
+
+    async def load_frozen_order(self, server_id: str) -> list[str] | None:
+        """Load persisted frozen tool order, or None if not stored."""
+        ...

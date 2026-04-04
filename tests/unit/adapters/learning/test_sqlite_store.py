@@ -94,7 +94,7 @@ class TestSQLiteSpecificBehavior:
         ) as cursor:
             row = await cursor.fetchone()
             assert row is not None
-            assert row[0] == 2
+            assert row[0] == 3
         await store2.close()
 
     async def test_migration_preserves_existing_data(self, tmp_path) -> None:
@@ -163,11 +163,12 @@ class TestSQLiteSpecificBehavior:
         assert retrieved.last_eval_at == original.last_eval_at
         assert retrieved.created_at == original.created_at
 
-    async def test_six_tables_created_after_migration(self, store) -> None:
-        """Schema migration v2 creates tool_pipeline_config (6 tables total)."""
+    async def test_seven_tables_created_after_migration(self, store) -> None:
+        """Schema migration v3 creates reranker_state (7 tables total)."""
         expected = {
             "tool_usage", "result_cache", "compression_events",
             "tool_cooccurrence", "schema_version", "tool_pipeline_config",
+            "reranker_state",
         }
         async with store._db.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
