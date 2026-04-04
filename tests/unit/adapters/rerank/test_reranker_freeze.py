@@ -348,3 +348,73 @@ class TestMaxToolsBoundaryFreeze:
         assert result == []
         # Empty list should not freeze
         assert reranker.is_frozen is False
+
+
+# ---------------------------------------------------------------------------
+# cache_aligned auto-freeze
+# ---------------------------------------------------------------------------
+
+
+class TestCacheAlignedAutoFreeze:
+    """When cache_aligned=True, reranker auto-freezes after first transform with stats."""
+
+    def test_cache_aligned_auto_freeze(self) -> None:
+        """cache_aligned=True causes freeze after first transform() with stats."""
+        reranker = StatisticalReranker()
+        reranker.set_cache_aligned(True)
+        reranker.record_call("alpha")
+        reranker.record_call("beta")
+
+        tools = [_tool("alpha"), _tool("beta"), _tool("gamma")]
+        result1 = reranker.transform(tools)
+
+        assert reranker.is_frozen is True
+
+        # Mutate stats -- should NOT affect order because frozen
+        for _ in range(10):
+            reranker.record_call("gamma")
+
+        result2 = reranker.transform(tools)
+        assert [t.name for t in result1] == [t.name for t in result2]
+
+    def test_cache_aligned_no_stats_still_freezes(self) -> None:
+        """cache_aligned=True with no stats freezes on cold start."""
+        reranker = StatisticalReranker()
+        reranker.set_cache_aligned(True)
+
+        tools = [_tool("x"), _tool("y")]
+        reranker.transform(tools)
+
+        assert reranker.is_frozen is True
+
+    def test_cache_aligned_false_does_not_auto_freeze(self) -> None:
+        """cache_aligned=False (default) does NOT change existing freeze behavior."""
+        reranker = StatisticalReranker()
+        # Default is False
+        reranker.record_call("alpha")
+
+        tools = [_tool("alpha")]
+        reranker.transform(tools)
+
+        # transform() already freezes by default (existing behavior)
+        assert reranker.is_frozen is True
+
+    def test_cache_aligned_only_freezes_once(self) -> None:
+        """Auto-freeze fires on first transform, not on every subsequent one."""
+        reranker = StatisticalReranker()
+        reranker.set_cache_aligned(True)
+        reranker.record_call("alpha")
+
+        tools = [_tool("alpha"), _tool("beta")]
+        reranker.transform(tools)
+        frozen_order_1 = list(reranker._frozen_order)
+
+        # Unfreeze and add new stats
+        reranker.unfreeze()
+        reranker.record_call("beta")
+        reranker.record_call("beta")
+        reranker.record_call("beta")
+
+        # Second transform should re-freeze with new stats
+        reranker.transform(tools)
+        assert reranker.is_frozen is True

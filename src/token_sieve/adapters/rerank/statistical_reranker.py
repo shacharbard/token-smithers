@@ -46,6 +46,11 @@ class StatisticalReranker:
         self._stats: dict[str, ToolUsageStats] = {}
         self._call_counter: int = 0
         self._frozen_order: list[str] | None = None
+        self._cache_aligned: bool = False
+
+    def set_cache_aligned(self, enabled: bool) -> None:
+        """Enable or disable cache-aligned auto-freeze mode."""
+        self._cache_aligned = enabled
 
     def record_call(self, tool_name: str) -> None:
         """Record that a tool was called."""

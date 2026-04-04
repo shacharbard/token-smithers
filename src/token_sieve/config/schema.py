@@ -116,6 +116,7 @@ class RerankerConfig(BaseModel):
     enabled: bool = True
     max_tools: int = 500
     recency_weight: float = 0.3
+    cache_aligned: bool = False
 
 
 class CacheConfig(BaseModel):

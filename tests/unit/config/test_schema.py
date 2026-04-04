@@ -322,12 +322,17 @@ class TestRerankerConfig:
         assert cfg.enabled is True
         assert cfg.max_tools == 500
         assert cfg.recency_weight == 0.3
+        assert cfg.cache_aligned is False
 
     def test_custom_values(self) -> None:
         cfg = RerankerConfig(enabled=False, max_tools=100, recency_weight=0.5)
         assert cfg.enabled is False
         assert cfg.max_tools == 100
         assert cfg.recency_weight == 0.5
+
+    def test_cache_aligned(self) -> None:
+        cfg = RerankerConfig(cache_aligned=True)
+        assert cfg.cache_aligned is True
 
 
 class TestCacheConfig:
