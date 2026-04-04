@@ -507,3 +507,226 @@ class TestTreeSitterASTSpecific:
         assert "Date.now()" not in result.content
         # Marker present
         assert "[token-sieve:" in result.content
+
+    # ------------------------------------------------------------------
+    # P02: Remaining languages
+    # ------------------------------------------------------------------
+
+    def test_compress_javascript_skeleton(self):
+        """JavaScript skeleton keeps class/method signatures + JSDoc."""
+        from token_sieve.adapters.compression.tree_sitter_ast import (
+            TreeSitterASTExtractor,
+        )
+
+        envelope = ContentEnvelope(
+            content=_JAVASCRIPT_CODE, content_type=ContentType.CODE
+        )
+        strategy = TreeSitterASTExtractor()
+        result = strategy.compress(envelope)
+
+        # Class signature
+        assert "class RateLimiter" in result.content
+        # Method signatures
+        assert "isAllowed" in result.content
+        assert "reset" in result.content
+        # JSDoc preserved
+        assert "Rate limiter using sliding window" in result.content
+        assert "Check whether the given key" in result.content
+        # Bodies dropped
+        assert "this.windows.set" not in result.content
+        assert "this.emit" not in result.content
+        # Marker present
+        assert "[token-sieve:" in result.content
+
+    def test_compress_go_skeleton(self):
+        """Go skeleton keeps struct + func signatures + comments."""
+        from token_sieve.adapters.compression.tree_sitter_ast import (
+            TreeSitterASTExtractor,
+        )
+
+        envelope = ContentEnvelope(
+            content=_GO_CODE, content_type=ContentType.CODE
+        )
+        strategy = TreeSitterASTExtractor()
+        result = strategy.compress(envelope)
+
+        # Struct type
+        assert "type Item struct" in result.content or "Item struct" in result.content
+        assert "type Cache struct" in result.content or "Cache struct" in result.content
+        # Function signatures
+        assert "func NewCache" in result.content
+        assert "func (c *Cache) Get" in result.content
+        assert "func (c *Cache) Set" in result.content
+        assert "func (c *Cache) Delete" in result.content
+        # Comments preserved
+        assert "NewCache creates a Cache" in result.content
+        # Bodies dropped
+        assert "c.mu.RLock()" not in result.content
+        assert "make(map[string]Item)" not in result.content
+        # Marker present
+        assert "[token-sieve:" in result.content
+
+    def test_compress_rust_skeleton(self):
+        """Rust skeleton keeps struct + impl + pub fn + doc comments."""
+        from token_sieve.adapters.compression.tree_sitter_ast import (
+            TreeSitterASTExtractor,
+        )
+
+        envelope = ContentEnvelope(
+            content=_RUST_CODE, content_type=ContentType.CODE
+        )
+        strategy = TreeSitterASTExtractor()
+        result = strategy.compress(envelope)
+
+        # Struct
+        assert "struct CacheEntry" in result.content
+        assert "struct TtlCache" in result.content or "pub struct TtlCache" in result.content
+        # Impl block
+        assert "impl" in result.content
+        # Function signatures
+        assert "pub fn new" in result.content
+        assert "pub fn get" in result.content
+        assert "pub fn set" in result.content
+        assert "pub fn remove" in result.content
+        # Doc comments preserved
+        assert "Thread-safe TTL cache" in result.content
+        assert "Create a new cache" in result.content
+        # Bodies dropped
+        assert "self.entries.get(key)" not in result.content
+        assert "HashMap::new()" not in result.content
+        # Marker present
+        assert "[token-sieve:" in result.content
+
+    def test_compress_java_skeleton(self):
+        """Java skeleton keeps class + method signatures + Javadoc + annotations."""
+        from token_sieve.adapters.compression.tree_sitter_ast import (
+            TreeSitterASTExtractor,
+        )
+
+        envelope = ContentEnvelope(
+            content=_JAVA_CODE, content_type=ContentType.CODE
+        )
+        strategy = TreeSitterASTExtractor()
+        result = strategy.compress(envelope)
+
+        # Class signature
+        assert "public class SimpleCache" in result.content
+        # Method signatures
+        assert "public V get(String key)" in result.content or "get(String key)" in result.content
+        assert "public void put(String key" in result.content or "put(String key" in result.content
+        # Javadoc preserved
+        assert "Simple thread-safe cache with TTL support" in result.content
+        assert "Retrieve a cached value" in result.content
+        # Annotation preserved
+        assert "@Override" in result.content
+        # Bodies dropped
+        assert "System.currentTimeMillis()" not in result.content
+        assert "store.remove(key)" not in result.content
+        # Marker present
+        assert "[token-sieve:" in result.content
+
+    @pytest.mark.parametrize(
+        "code_fixture",
+        [_PYTHON_CODE, _TYPESCRIPT_CODE, _JAVASCRIPT_CODE, _GO_CODE, _RUST_CODE, _JAVA_CODE],
+        ids=["python", "typescript", "javascript", "go", "rust", "java"],
+    )
+    def test_compress_result_shorter_all_languages(self, code_fixture):
+        """Skeleton output is shorter than input for all 6 languages."""
+        from token_sieve.adapters.compression.tree_sitter_ast import (
+            TreeSitterASTExtractor,
+        )
+
+        envelope = ContentEnvelope(
+            content=code_fixture, content_type=ContentType.CODE
+        )
+        strategy = TreeSitterASTExtractor()
+        result = strategy.compress(envelope)
+        assert len(result.content) < len(envelope.content)
+
+    # ------------------------------------------------------------------
+    # P02: Error tolerance tests
+    # ------------------------------------------------------------------
+
+    def test_compress_high_error_rate_passthrough(self):
+        """Code with >50% ERROR nodes passes through unchanged."""
+        from token_sieve.adapters.compression.tree_sitter_ast import (
+            TreeSitterASTExtractor,
+        )
+
+        envelope = ContentEnvelope(
+            content=_MALFORMED_CODE, content_type=ContentType.CODE
+        )
+        strategy = TreeSitterASTExtractor()
+        result = strategy.compress(envelope)
+        assert result.content == _MALFORMED_CODE
+
+    def test_compress_no_structures_passthrough(self):
+        """Code with no functions or classes passes through unchanged."""
+        from token_sieve.adapters.compression.tree_sitter_ast import (
+            TreeSitterASTExtractor,
+        )
+
+        # Valid Python with only assignments, no functions/classes
+        bare_code = "x = 1\ny = 2\nz = x + y\nprint(z)\n"
+        envelope = ContentEnvelope(
+            content=bare_code, content_type=ContentType.CODE
+        )
+        strategy = TreeSitterASTExtractor()
+        result = strategy.compress(envelope)
+        assert result.content == bare_code
+
+    def test_compress_preserves_docstrings(self):
+        """Docstrings / JSDoc / Go comments are preserved in skeleton."""
+        from token_sieve.adapters.compression.tree_sitter_ast import (
+            TreeSitterASTExtractor,
+        )
+
+        # Python docstrings
+        py_env = ContentEnvelope(content=_PYTHON_CODE, content_type=ContentType.CODE)
+        py_result = TreeSitterASTExtractor().compress(py_env)
+        assert "Process and transform data records" in py_result.content
+
+        # Go comments
+        go_env = ContentEnvelope(content=_GO_CODE, content_type=ContentType.CODE)
+        go_result = TreeSitterASTExtractor().compress(go_env)
+        assert "NewCache creates a Cache" in go_result.content
+
+    def test_compress_includes_summary_marker(self):
+        """Output contains format_summary_marker text."""
+        from token_sieve.adapters.compression.tree_sitter_ast import (
+            TreeSitterASTExtractor,
+        )
+
+        envelope = ContentEnvelope(
+            content=_PYTHON_CODE, content_type=ContentType.CODE
+        )
+        strategy = TreeSitterASTExtractor()
+        result = strategy.compress(envelope)
+        # format_summary_marker produces "[token-sieve: ..." pattern
+        assert "[token-sieve: TreeSitterASTExtractor" in result.content
+        assert "lines filtered to" in result.content
+
+    def test_constructor_kwargs(self):
+        """Constructor accepts mode, timeout_ms, error_threshold kwargs."""
+        from token_sieve.adapters.compression.tree_sitter_ast import (
+            TreeSitterASTExtractor,
+        )
+
+        strategy = TreeSitterASTExtractor(
+            mode="signature", timeout_ms=200, error_threshold=0.3
+        )
+        assert strategy is not None
+
+    def test_compress_deterministic(self):
+        """Same input always produces same output."""
+        from token_sieve.adapters.compression.tree_sitter_ast import (
+            TreeSitterASTExtractor,
+        )
+
+        envelope = ContentEnvelope(
+            content=_PYTHON_CODE, content_type=ContentType.CODE
+        )
+        strategy = TreeSitterASTExtractor()
+        r1 = strategy.compress(envelope)
+        r2 = strategy.compress(envelope)
+        assert r1.content == r2.content
