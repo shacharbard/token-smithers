@@ -286,6 +286,40 @@ class SQLiteLearningStore:
         )
         await self._db.commit()
 
+    async def record_compression_events_batch(
+        self,
+        session_id: str,
+        events: list[CompressionEvent],
+        tool_name: str,
+    ) -> None:
+        """Record multiple compression events in a single transaction."""
+        if not events:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            for event in events:
+                await self._db.execute(
+                    """\
+                    INSERT INTO compression_events
+                        (session_id, tool_name, strategy_name, original_tokens,
+                         compressed_tokens, is_regret, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        session_id,
+                        tool_name,
+                        event.strategy_name,
+                        event.original_tokens,
+                        event.compressed_tokens,
+                        1 if event.is_regret else 0,
+                        now,
+                    ),
+                )
+            await self._db.commit()
+        except Exception:
+            await self._db.rollback()
+            raise
+
     async def record_cooccurrence(self, tool_a: str, tool_b: str) -> None:
         """Record that two tools were called together."""
         now = datetime.now(timezone.utc).isoformat()

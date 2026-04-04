@@ -791,6 +791,12 @@ class _DeferredLearningStore:
         store = await self._ensure_connected()
         await store.record_compression_event(session_id, event, tool_name)
 
+    async def record_compression_events_batch(
+        self, session_id: str, events: list, tool_name: str
+    ) -> None:
+        store = await self._ensure_connected()
+        await store.record_compression_events_batch(session_id, events, tool_name)
+
     async def get_usage_stats(self, server_id: str) -> list:
         store = await self._ensure_connected()
         return await store.get_usage_stats(server_id)

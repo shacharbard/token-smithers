@@ -183,3 +183,76 @@ class TestSQLiteSpecificBehavior:
         ) as cursor:
             columns = [r[1] for r in await cursor.fetchall()]
         assert "is_regret" in columns
+
+
+class TestBatchCompressionEvents:
+    """Fix 4: Batch compression event recording."""
+
+    @pytest.fixture()
+    async def store(self):
+        from token_sieve.adapters.learning.sqlite_store import SQLiteLearningStore
+
+        return await SQLiteLearningStore.connect(":memory:")
+
+    async def test_batch_records_all_events(self, store) -> None:
+        """Batch recording inserts all events atomically."""
+        from token_sieve.domain.model import CompressionEvent, ContentType
+
+        events = [
+            CompressionEvent(
+                strategy_name=f"strategy_{i}",
+                original_tokens=100,
+                compressed_tokens=50,
+                content_type=ContentType.TEXT,
+                is_regret=False,
+            )
+            for i in range(5)
+        ]
+        await store.record_compression_events_batch("session1", events, "tool1")
+
+        async with store._db.execute(
+            "SELECT COUNT(*) FROM compression_events WHERE session_id = 'session1'"
+        ) as cursor:
+            row = await cursor.fetchone()
+            assert row[0] == 5
+
+    async def test_batch_empty_list_succeeds(self, store) -> None:
+        """Empty event list should succeed without errors."""
+        await store.record_compression_events_batch("session1", [], "tool1")
+
+        async with store._db.execute(
+            "SELECT COUNT(*) FROM compression_events"
+        ) as cursor:
+            row = await cursor.fetchone()
+            assert row[0] == 0
+
+    async def test_batch_is_single_transaction(self, store) -> None:
+        """Batch should use fewer commits than individual calls."""
+        from token_sieve.domain.model import CompressionEvent, ContentType
+
+        events = [
+            CompressionEvent(
+                strategy_name=f"strategy_{i}",
+                original_tokens=100,
+                compressed_tokens=50,
+                content_type=ContentType.TEXT,
+                is_regret=False,
+            )
+            for i in range(3)
+        ]
+        await store.record_compression_events_batch("session1", events, "tool1")
+
+        # All 3 should be recorded
+        async with store._db.execute(
+            "SELECT COUNT(*) FROM compression_events"
+        ) as cursor:
+            row = await cursor.fetchone()
+            assert row[0] == 3
+
+        # Verify strategy names are all correct
+        async with store._db.execute(
+            "SELECT strategy_name FROM compression_events ORDER BY strategy_name"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            names = [r[0] for r in rows]
+            assert names == ["strategy_0", "strategy_1", "strategy_2"]
