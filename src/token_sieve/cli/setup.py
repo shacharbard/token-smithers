@@ -203,7 +203,6 @@ def generate_sieve_config(server: McpServerEntry) -> str:
     config: dict = {
         "backend": backend,
         "schema_virtualization": {"enabled": True},
-        "compression": {"size_gate_threshold": 200},
     }
     return header + yaml.dump(config, default_flow_style=False)
 

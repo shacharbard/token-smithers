@@ -83,7 +83,7 @@ class CompressionConfig(BaseModel):
     strategy: str = "passthrough"
     max_tokens: int = 4096
     dedup_window: int = 50
-    size_gate_threshold: int = 200
+    size_gate_threshold: int = 2000
     adapters: list[AdapterConfig] = Field(default_factory=_default_adapters)
 
     @field_validator("max_tokens")

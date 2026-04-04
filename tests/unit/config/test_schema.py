@@ -287,9 +287,9 @@ class TestCompressionConfigAdapters:
         assert cfg.adapters[0].settings["sentence_count"] == 3
 
     def test_size_gate_threshold_field(self) -> None:
-        """CompressionConfig has a size_gate_threshold field."""
+        """CompressionConfig has a size_gate_threshold field defaulting to 2000."""
         cfg = CompressionConfig()
-        assert cfg.size_gate_threshold == 200
+        assert cfg.size_gate_threshold == 2000
 
     def test_custom_size_gate_threshold(self) -> None:
         cfg = CompressionConfig(size_gate_threshold=5000)

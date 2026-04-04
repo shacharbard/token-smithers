@@ -168,16 +168,16 @@ class TestGenerateSieveConfig:
         assert "schema_virtualization" in parsed
         assert parsed["schema_virtualization"]["enabled"] is True
 
-    def test_generate_sieve_config_includes_compression_settings(self) -> None:
-        """Generated config includes a lower size_gate_threshold."""
+    def test_generate_sieve_config_no_hardcoded_compression(self) -> None:
+        """Generated config should not hardcode compression settings (inherits schema defaults)."""
         entry = McpServerEntry(
             name="my-server", command="npx", args=["serve"], env={}
         )
         content = generate_sieve_config(entry)
         parsed = yaml.safe_load(content)
 
-        assert "compression" in parsed
-        assert parsed["compression"]["size_gate_threshold"] == 200
+        # compression section should not be present — let schema defaults apply
+        assert "compression" not in parsed
 
 
 class TestWrapServers:
