@@ -220,3 +220,73 @@ class TestValidateConfigCrossSection:
         cfg = TokenSieveConfig()
         errors = validate_config(cfg)
         assert errors == []
+
+
+class TestSafetyNetAndContentSpecificGap:
+    """Fix 2: Missing adapters in validator phase sets."""
+
+    def test_smart_truncation_in_safety_net(self):
+        """smart_truncation must be in the SAFETY_NET frozenset."""
+        from token_sieve.config.validator import SAFETY_NET
+
+        assert "smart_truncation" in SAFETY_NET
+
+    def test_smart_truncation_not_last_warns(self, validate):
+        """smart_truncation not at end should produce a safety net warning."""
+        warnings = validate([
+            "whitespace_normalizer",
+            "smart_truncation",
+            "rle_encoder",
+        ])
+        assert any("safety net" in w.lower() or "smart_truncation" in w for w in warnings)
+
+    def test_smart_truncation_last_is_valid(self, validate):
+        """smart_truncation at the end should not produce a position warning."""
+        warnings = validate([
+            "whitespace_normalizer",
+            "smart_truncation",
+        ])
+        assert not any("safety net" in w.lower() for w in warnings)
+
+    def test_progressive_disclosure_in_content_specific(self):
+        """progressive_disclosure must be categorized."""
+        from token_sieve.config.validator import CONTENT_SPECIFIC
+
+        assert "progressive_disclosure" in CONTENT_SPECIFIC
+
+    def test_graph_encoder_in_content_specific(self):
+        """graph_encoder must be categorized."""
+        from token_sieve.config.validator import CONTENT_SPECIFIC
+
+        assert "graph_encoder" in CONTENT_SPECIFIC
+
+    def test_key_aliasing_in_content_specific(self):
+        """key_aliasing must be categorized."""
+        from token_sieve.config.validator import CONTENT_SPECIFIC
+
+        assert "key_aliasing" in CONTENT_SPECIFIC
+
+    def test_file_redirect_in_format(self):
+        """file_redirect must be categorized in FORMAT (positioned after content-specific)."""
+        from token_sieve.config.validator import FORMAT
+
+        assert "file_redirect" in FORMAT
+
+    def test_all_registry_names_categorized(self):
+        """Every adapter in _ADAPTER_REGISTRY should be in a validator phase set."""
+        from token_sieve.config.validator import (
+            CLEANUP,
+            CONTENT_SPECIFIC,
+            FORMAT,
+            SAFETY_NET,
+        )
+        from token_sieve.server.proxy import ProxyServer
+
+        all_categorized = CLEANUP | CONTENT_SPECIFIC | FORMAT | SAFETY_NET
+        uncategorized_ok = {"passthrough", "ast_skeleton"}  # no-ops / special
+        for name in ProxyServer._ADAPTER_REGISTRY:
+            if name not in uncategorized_ok:
+                assert name in all_categorized, (
+                    f"Adapter '{name}' is in registry but not categorized "
+                    f"in any validator phase set"
+                )

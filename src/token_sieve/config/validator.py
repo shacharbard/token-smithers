@@ -25,6 +25,9 @@ CONTENT_SPECIFIC = frozenset({
     "log_level_filter",
     "error_stack_compressor",
     "code_comment_stripper",
+    "progressive_disclosure",
+    "graph_encoder",
+    "key_aliasing",
 })
 
 FORMAT = frozenset({
@@ -32,10 +35,12 @@ FORMAT = frozenset({
     "yaml_transcoder",
     "sentence_scorer",
     "rle_encoder",
+    "file_redirect",
 })
 
 SAFETY_NET = frozenset({
     "truncation",
+    "smart_truncation",
 })
 
 # Ordered phases: each adapter must appear in or after its phase
@@ -65,11 +70,12 @@ def validate_adapter_order(adapter_names: list[str]) -> list[str]:
             warnings.append(f"Duplicate adapter: '{name}' appears more than once")
         seen.add(name)
 
-    # Check truncation is last (if present)
-    if "truncation" in adapter_names and adapter_names[-1] != "truncation":
-        warnings.append(
-            "truncation (safety net) should be last in the adapter chain"
-        )
+    # Check safety net adapters are last (if present)
+    for name in adapter_names:
+        if name in SAFETY_NET and adapter_names[-1] != name:
+            warnings.append(
+                f"{name} (safety net) should be last in the adapter chain"
+            )
 
     # Check phase ordering: each known adapter should not appear before
     # adapters from an earlier phase
