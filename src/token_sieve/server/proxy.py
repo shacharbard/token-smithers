@@ -757,6 +757,7 @@ class ProxyServer:
                 max_entries=config.semantic_cache.max_entries,
                 ttl_seconds=config.semantic_cache.ttl_seconds or 86400,
                 similarity_threshold=config.semantic_cache.similarity_threshold,
+                embedder_name=config.semantic_cache.embedder,
             )
             # F1: Register semantic cache as invalidation observer
             invalidator.register_observer(semantic_cache)
@@ -905,10 +906,12 @@ class _DeferredSemanticCache:
         max_entries: int = 1000,
         ttl_seconds: int = 86400,
         similarity_threshold: float = 0.85,
+        embedder_name: str | None = None,
     ) -> None:
         self._max_entries = max_entries
         self._ttl_seconds = ttl_seconds
         self._similarity_threshold = similarity_threshold
+        self._embedder_name = embedder_name
         self._cache: Any = None
         self._lock = asyncio.Lock()  # M1: prevent concurrent double-init
 
@@ -938,10 +941,26 @@ class _DeferredSemanticCache:
             if self._cache is None:
                 from token_sieve.adapters.cache.semantic_cache import SQLiteSemanticCache
 
+                embedder = None
+                if self._embedder_name == "model2vec":
+                    try:
+                        from token_sieve.adapters.embed.model2vec_embedder import (
+                            Model2VecEmbedder,
+                        )
+
+                        embedder = Model2VecEmbedder()
+                    except Exception as exc:
+                        print(
+                            f"Warning: failed to load Model2VecEmbedder: {exc}. "
+                            f"Falling back to SequenceMatcher.",
+                            file=__import__("sys").stderr,
+                        )
+
                 self._cache = SQLiteSemanticCache(
                     db_path=":memory:",
                     max_entries=self._max_entries,
                     ttl_seconds=self._ttl_seconds,
+                    embedder=embedder,
                 )
                 await self._cache.initialize()
         return self._cache

@@ -209,6 +209,7 @@ class SemanticCacheConfig(BaseModel):
     similarity_threshold: float = 1.0  # exact-match only; fuzzy disabled (30% false-hit rate)
     max_entries: int = 1000
     ttl_seconds: int | None = None
+    embedder: str | None = None  # Optional embedder backend (e.g. "model2vec")
 
 
 class TokenSieveConfig(BaseModel):
