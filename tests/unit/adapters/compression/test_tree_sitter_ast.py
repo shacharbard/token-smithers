@@ -786,22 +786,60 @@ export function processConfig(opts: { timeout: number; retries: number }): Resul
         assert result.content == huge
 
     def test_no_double_parsing(self):
-        """compress() should reuse the parse tree from _detect_language, not re-parse."""
+        """can_handle() + compress() should call _detect_language only once."""
+        from unittest.mock import patch
+
         from token_sieve.adapters.compression.tree_sitter_ast import (
             TreeSitterASTExtractor,
+            _detect_language,
         )
-        from unittest.mock import MagicMock
 
         envelope = ContentEnvelope(
             content=_PYTHON_CODE, content_type=ContentType.CODE
         )
         strategy = TreeSitterASTExtractor()
 
-        # Just verify it works correctly — the caching is an implementation detail
-        # but we verify the result is consistent
-        result = strategy.compress(envelope)
+        # Wrap _detect_language to count calls
+        with patch(
+            "token_sieve.adapters.compression.tree_sitter_ast._detect_language",
+            wraps=_detect_language,
+        ) as mock_detect:
+            assert strategy.can_handle(envelope) is True
+            result = strategy.compress(envelope)
+
+            # _detect_language should be called exactly once (by can_handle);
+            # compress() should reuse the cached result
+            assert mock_detect.call_count == 1
+
         assert "class DataProcessor" in result.content
         assert "def __init__" in result.content
+
+    def test_detection_cache_invalidated_on_different_content(self):
+        """Cache from can_handle() is not reused when compress() sees different content."""
+        from unittest.mock import patch
+
+        from token_sieve.adapters.compression.tree_sitter_ast import (
+            TreeSitterASTExtractor,
+            _detect_language,
+        )
+
+        code_a = _PYTHON_CODE
+        code_b = "def other_func():\n    return 42\n" * 5
+
+        strategy = TreeSitterASTExtractor()
+
+        # can_handle with code_a
+        env_a = ContentEnvelope(content=code_a, content_type=ContentType.CODE)
+        assert strategy.can_handle(env_a) is True
+
+        # compress with different content — should re-detect, not use stale cache
+        env_b = ContentEnvelope(content=code_b, content_type=ContentType.CODE)
+        with patch(
+            "token_sieve.adapters.compression.tree_sitter_ast._detect_language",
+            wraps=_detect_language,
+        ) as mock_detect:
+            result = strategy.compress(env_b)
+            assert mock_detect.call_count == 1  # fresh detection for code_b
 
     # ------------------------------------------------------------------
     # Finding 6: Multi-line doc comment tests

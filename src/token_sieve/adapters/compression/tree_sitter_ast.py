@@ -537,6 +537,8 @@ class TreeSitterASTExtractor:
         self._mode = mode
         self._timeout_ms = timeout_ms
         self._error_threshold = error_threshold
+        self._last_detection: tuple[str, object] | None = None
+        self._last_content_id: int | None = None
 
     def can_handle(self, envelope: ContentEnvelope) -> bool:
         """Return True if tree-sitter is available and language is detected."""
@@ -544,8 +546,14 @@ class TreeSitterASTExtractor:
             return False
         if len(envelope.content) > _MAX_INPUT_SIZE:
             return False
-        lang, _tree = _detect_language(envelope.content, envelope.metadata)
-        return lang is not None
+        result = _detect_language(envelope.content, envelope.metadata)
+        lang, _tree = result
+        if lang is not None:
+            self._last_detection = result
+            self._last_content_id = id(envelope.content)
+            return True
+        self._last_detection = None
+        return False
 
     def compress(self, envelope: ContentEnvelope) -> ContentEnvelope:
         """Extract skeleton from code content.
@@ -563,7 +571,16 @@ class TreeSitterASTExtractor:
         if len(envelope.content) > _MAX_INPUT_SIZE:
             return envelope
 
-        lang, cached_tree = _detect_language(envelope.content, envelope.metadata)
+        # Reuse cached detection from can_handle() if content matches
+        if (
+            self._last_detection is not None
+            and self._last_content_id == id(envelope.content)
+        ):
+            lang, cached_tree = self._last_detection
+            self._last_detection = None
+        else:
+            lang, cached_tree = _detect_language(envelope.content, envelope.metadata)
+
         if lang is None:
             return envelope
 
