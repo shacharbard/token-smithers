@@ -923,6 +923,22 @@ class _DeferredLearningStore:
         store = await self._ensure_connected()
         await store.save_pipeline_config(config)
 
+    async def get_session_report(self, session_id: str) -> dict:
+        store = await self._ensure_connected()
+        return await store.get_session_report(session_id)
+
+    async def get_cross_server_stats(self) -> list[dict]:
+        store = await self._ensure_connected()
+        return await store.get_cross_server_stats()
+
+    async def get_adapter_effectiveness(self, limit: int = 10) -> list[dict]:
+        store = await self._ensure_connected()
+        return await store.get_adapter_effectiveness(limit)
+
+    async def get_savings_trend(self, sessions: int = 10) -> list[dict]:
+        store = await self._ensure_connected()
+        return await store.get_savings_trend(sessions)
+
 
 class _DeferredSemanticCache:
     """Deferred semantic cache — wraps config for lazy async init."""

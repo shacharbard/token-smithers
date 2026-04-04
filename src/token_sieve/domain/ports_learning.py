@@ -96,3 +96,19 @@ class LearningStore(Protocol):
     async def load_frozen_order(self, server_id: str) -> list[str] | None:
         """Load persisted frozen tool order, or None if not stored."""
         ...
+
+    async def get_session_report(self, session_id: str) -> dict:
+        """Get per-tool and per-strategy breakdowns for a session."""
+        ...
+
+    async def get_cross_server_stats(self) -> list[dict]:
+        """Get per-tool aggregation across all compression events."""
+        ...
+
+    async def get_adapter_effectiveness(self, limit: int = 10) -> list[dict]:
+        """Get strategies ranked by total tokens saved (descending)."""
+        ...
+
+    async def get_savings_trend(self, sessions: int = 10) -> list[dict]:
+        """Get session-level rollups for the last N sessions."""
+        ...

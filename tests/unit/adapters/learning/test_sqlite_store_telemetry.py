@@ -122,13 +122,13 @@ class TestGetAdapterEffectiveness:
         results = await store.get_adapter_effectiveness(limit=10)
 
         assert len(results) == 3
-        # Sorted by total saved descending
-        assert results[0]["strategy_name"] == "toon"  # 1500 saved
-        assert results[0]["total_saved"] == 1500
-        assert results[1]["strategy_name"] == "whitespace"  # 5*400=2000 saved
-        # Actually whitespace saves 5*400=2000 > toon 1500, fix assertion
-        # Let me re-check: whitespace: 5*(1000-600)=2000, null_elider: 3*(500-100)=1200, toon: 1*(2000-500)=1500
-        # Sorted desc: whitespace=2000, toon=1500, null_elider=1200
+        # whitespace: 5*(1000-600)=2000, toon: 1*(2000-500)=1500, null_elider: 3*(500-100)=1200
+        assert results[0]["strategy_name"] == "whitespace"
+        assert results[0]["total_saved"] == 2000
+        assert results[1]["strategy_name"] == "toon"
+        assert results[1]["total_saved"] == 1500
+        assert results[2]["strategy_name"] == "null_elider"
+        assert results[2]["total_saved"] == 1200
 
     @pytest.mark.asyncio
     async def test_get_adapter_effectiveness_sorted(self, store) -> None:

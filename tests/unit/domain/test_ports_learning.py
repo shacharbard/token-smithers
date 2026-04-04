@@ -270,6 +270,22 @@ class TestLearningStoreStructuralSubtyping:
             ) -> list[str] | None:
                 return None
 
+            async def get_session_report(self, session_id: str) -> dict:
+                return {}
+
+            async def get_cross_server_stats(self) -> list[dict]:
+                return []
+
+            async def get_adapter_effectiveness(
+                self, limit: int = 10
+            ) -> list[dict]:
+                return []
+
+            async def get_savings_trend(
+                self, sessions: int = 10
+            ) -> list[dict]:
+                return []
+
         assert isinstance(MockStore(), LearningStore)
 
     def test_missing_method_not_instance(self) -> None:

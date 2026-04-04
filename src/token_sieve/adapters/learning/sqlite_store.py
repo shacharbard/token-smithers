@@ -482,3 +482,131 @@ class SQLiteLearningStore:
             if row is None:
                 return None
             return json.loads(row[0])
+
+    async def get_session_report(self, session_id: str) -> dict:
+        """Get per-tool and per-strategy breakdowns for a session."""
+        # Per-tool breakdown
+        async with self._db.execute(
+            "SELECT tool_name, COUNT(*) as cnt, "
+            "SUM(original_tokens) as orig, SUM(compressed_tokens) as comp "
+            "FROM compression_events WHERE session_id = ? "
+            "GROUP BY tool_name ORDER BY orig DESC",
+            (session_id,),
+        ) as cursor:
+            tool_rows = await cursor.fetchall()
+
+        tool_breakdown = [
+            {
+                "tool_name": r[0],
+                "event_count": r[1],
+                "total_original": r[2],
+                "total_compressed": r[3],
+                "total_saved": r[2] - r[3],
+            }
+            for r in tool_rows
+        ]
+
+        # Per-strategy breakdown
+        async with self._db.execute(
+            "SELECT strategy_name, COUNT(*) as cnt, "
+            "SUM(original_tokens) as orig, SUM(compressed_tokens) as comp "
+            "FROM compression_events WHERE session_id = ? "
+            "GROUP BY strategy_name ORDER BY orig DESC",
+            (session_id,),
+        ) as cursor:
+            strat_rows = await cursor.fetchall()
+
+        strategy_breakdown = [
+            {
+                "strategy_name": r[0],
+                "event_count": r[1],
+                "total_original": r[2],
+                "total_compressed": r[3],
+                "total_saved": r[2] - r[3],
+            }
+            for r in strat_rows
+        ]
+
+        # Totals
+        total_orig = sum(t["total_original"] for t in tool_breakdown)
+        total_comp = sum(t["total_compressed"] for t in tool_breakdown)
+        total_count = sum(t["event_count"] for t in tool_breakdown)
+
+        return {
+            "tool_breakdown": tool_breakdown,
+            "strategy_breakdown": strategy_breakdown,
+            "totals": {
+                "total_original": total_orig,
+                "total_compressed": total_comp,
+                "total_saved": total_orig - total_comp,
+                "event_count": total_count,
+            },
+        }
+
+    async def get_cross_server_stats(self) -> list[dict]:
+        """Get per-tool aggregation across all compression events."""
+        async with self._db.execute(
+            "SELECT tool_name, COUNT(*) as cnt, "
+            "SUM(original_tokens) as orig, SUM(compressed_tokens) as comp "
+            "FROM compression_events "
+            "GROUP BY tool_name ORDER BY (orig - comp) DESC",
+        ) as cursor:
+            rows = await cursor.fetchall()
+
+        return [
+            {
+                "tool_name": r[0],
+                "event_count": r[1],
+                "total_original": r[2],
+                "total_compressed": r[3],
+                "total_saved": r[2] - r[3],
+            }
+            for r in rows
+        ]
+
+    async def get_adapter_effectiveness(self, limit: int = 10) -> list[dict]:
+        """Get strategies ranked by total tokens saved (descending)."""
+        async with self._db.execute(
+            "SELECT strategy_name, COUNT(*) as cnt, "
+            "SUM(original_tokens) as orig, SUM(compressed_tokens) as comp "
+            "FROM compression_events "
+            "GROUP BY strategy_name "
+            "ORDER BY (orig - comp) DESC LIMIT ?",
+            (limit,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+
+        return [
+            {
+                "strategy_name": r[0],
+                "event_count": r[1],
+                "total_original": r[2],
+                "total_compressed": r[3],
+                "total_saved": r[2] - r[3],
+            }
+            for r in rows
+        ]
+
+    async def get_savings_trend(self, sessions: int = 10) -> list[dict]:
+        """Get session-level rollups for the last N sessions."""
+        async with self._db.execute(
+            "SELECT session_id, "
+            "SUM(original_tokens) as orig, SUM(compressed_tokens) as comp, "
+            "COUNT(*) as cnt, MAX(created_at) as last_at "
+            "FROM compression_events "
+            "GROUP BY session_id "
+            "ORDER BY last_at DESC LIMIT ?",
+            (sessions,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+
+        return [
+            {
+                "session_id": r[0],
+                "total_original": r[1],
+                "total_compressed": r[2],
+                "total_saved": r[1] - r[2],
+                "event_count": r[3],
+            }
+            for r in rows
+        ]
