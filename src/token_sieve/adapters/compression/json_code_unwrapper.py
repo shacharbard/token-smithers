@@ -27,6 +27,9 @@ class JsonCodeUnwrapper:
     Satisfies CompressionStrategy protocol structurally.
     """
 
+    def __init__(self, **kwargs: Any) -> None:  # noqa: ARG002
+        """Accept kwargs for AdapterConfig.settings forward-compatibility."""
+
     def can_handle(self, envelope: ContentEnvelope) -> bool:
         """Return True if content is JSON containing a recognised code field."""
         try:
