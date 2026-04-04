@@ -717,6 +717,30 @@ class TestTreeSitterASTSpecific:
         )
         assert strategy is not None
 
+    def test_typescript_object_type_in_params_not_truncated(self):
+        """TypeScript function with { in parameter types should not be truncated early."""
+        from token_sieve.adapters.compression.tree_sitter_ast import (
+            TreeSitterASTExtractor,
+        )
+
+        ts_code = '''\
+export function processConfig(opts: { timeout: number; retries: number }): Result {
+    return doStuff(opts);
+}
+'''
+        envelope = ContentEnvelope(
+            content=ts_code,
+            content_type=ContentType.CODE,
+            metadata={"file_extension": "ts"},
+        )
+        strategy = TreeSitterASTExtractor()
+        result = strategy.compress(envelope)
+
+        # The full parameter list should be preserved, not truncated at first {
+        assert "opts:" in result.content or "opts" in result.content
+        # Must NOT truncate to just "export function processConfig(opts:"
+        assert "timeout" in result.content or "retries" in result.content
+
     def test_compress_deterministic(self):
         """Same input always produces same output."""
         from token_sieve.adapters.compression.tree_sitter_ast import (

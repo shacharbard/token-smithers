@@ -310,6 +310,13 @@ def _extract_skeleton(
             "utf-8", errors="replace"
         )
 
+    # Node types that represent a function/class body in brace languages
+    _body_node_types = {
+        "statement_block", "block", "declaration_list",
+        "class_body", "enum_body", "interface_body",
+        "field_declaration_list",
+    }
+
     def _extract_signature(node: Any) -> str:
         """Extract everything up to the signature terminator, excluding it."""
         full_text = _node_text(node)
@@ -324,10 +331,15 @@ def _extract_skeleton(
                     break
             return "\n".join(sig_lines)
         else:
-            # For { terminator languages, find the first {
-            idx = full_text.find(sig_terminator)
-            if idx >= 0:
-                return full_text[:idx].rstrip()
+            # For brace languages, find the body child node and take text
+            # up to its start. This avoids incorrect truncation when { appears
+            # in type annotations (e.g., TypeScript object types in params).
+            for child in node.children:
+                if child.type in _body_node_types:
+                    # Offset relative to parent node start
+                    offset = child.start_byte - node.start_byte
+                    return full_text[:offset].rstrip()
+            # Fallback: first line if no body child found
             return full_text.split("\n")[0]
 
     def _get_preceding_doc_comment(node: Any) -> str | None:
