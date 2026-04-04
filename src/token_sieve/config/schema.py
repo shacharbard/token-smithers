@@ -56,13 +56,16 @@ def _default_adapters() -> list[AdapterConfig]:
         AdapterConfig(name="path_prefix_deduplicator"),
         AdapterConfig(name="timestamp_normalizer"),
         # Content-specific lossy (off by default)
+        AdapterConfig(name="test_output_compressor", enabled=True),
         AdapterConfig(name="log_level_filter", enabled=False),
         AdapterConfig(name="error_stack_compressor", enabled=False),
         AdapterConfig(name="code_comment_stripper", enabled=False),
         AdapterConfig(name="json_code_unwrapper", enabled=True),
         AdapterConfig(name="tree_sitter_ast", enabled=True),
-        # Sentence scorer + RLE
+        AdapterConfig(name="progressive_disclosure", enabled=False),
+        # Sentence scorer + BM25 + RLE
         AdapterConfig(name="sentence_scorer", enabled=False),
+        AdapterConfig(name="bm25_sentence_selector", enabled=False),
         AdapterConfig(name="rle_encoder"),
         # Format transforms (mutually exclusive via transformed_by)
         AdapterConfig(name="toon_compressor"),
@@ -206,6 +209,7 @@ class SemanticCacheConfig(BaseModel):
     similarity_threshold: float = 1.0  # exact-match only; fuzzy disabled (30% false-hit rate)
     max_entries: int = 1000
     ttl_seconds: int | None = None
+    embedder: str | None = None  # Embedder backend for cosine similarity (e.g. "model2vec"); None=SequenceMatcher
 
 
 class TokenSieveConfig(BaseModel):
@@ -231,6 +235,8 @@ class TokenSieveConfig(BaseModel):
     )
     system_prompt: SystemPromptConfig = Field(default_factory=SystemPromptConfig)
     semantic_cache: SemanticCacheConfig = Field(default_factory=SemanticCacheConfig)
+    compaction_warning_threshold: int = 80000  # Cumulative compressed tokens before one-time warning (~40% of 200K context)
+    model: str = "claude-sonnet-4-5"  # Model name for tokencost pricing in stats/estimate commands
 
 
 def load_config(path: Path) -> TokenSieveConfig:

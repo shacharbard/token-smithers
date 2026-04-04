@@ -237,6 +237,24 @@ def _print_table(
             f"tokens per session{_RESET}"
         )
 
+        # Optional cost estimation via tokencost
+        try:
+            from token_sieve.cli.cost_utils import estimate_session_cost, format_cost, get_model
+
+            model = get_model()
+            cost = estimate_session_cost(
+                tokens_saved=savings["total_tokens_saved"],
+                model=model,
+            )
+            if cost is not None:
+                print(
+                    f"    {_GREEN}$/day saved: "
+                    f"~{format_cost(cost['cost_per_day_saved'])} "
+                    f"({model}){_RESET}"
+                )
+        except Exception:
+            pass
+
     print(
         f"\n  {_DIM}\"Excellent... Run 'token-smithers setup' to start saving.\"{_RESET}\n"
     )

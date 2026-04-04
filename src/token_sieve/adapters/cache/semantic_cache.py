@@ -1,12 +1,14 @@
 """SQLite-backed semantic result cache.
 
 Satisfies SemanticCachePort Protocol. Uses aiosqlite for async I/O.
-Supports exact-match (hash) and fuzzy (edit-distance) lookup.
+Supports exact-match (hash) and fuzzy (edit-distance or cosine) lookup.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import math
 import time
 from typing import Any
 
@@ -26,7 +28,8 @@ CREATE TABLE IF NOT EXISTS result_cache (
     result_text TEXT NOT NULL,
     hit_count INTEGER NOT NULL DEFAULT 0,
     created_at REAL NOT NULL,
-    last_hit_at REAL
+    last_hit_at REAL,
+    embedding TEXT
 );
 """
 
@@ -34,6 +37,21 @@ _CREATE_INDEX_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_result_cache_tool ON result_cache(tool_name);",
     "CREATE INDEX IF NOT EXISTS idx_result_cache_hash ON result_cache(args_hash);",
 ]
+
+# Migration: add embedding column if it doesn't exist
+_ADD_EMBEDDING_COL_SQL = (
+    "ALTER TABLE result_cache ADD COLUMN embedding TEXT"
+)
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Compute cosine similarity between two vectors."""
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(x * x for x in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
 
 
 class SQLiteSemanticCache:
@@ -44,7 +62,7 @@ class SQLiteSemanticCache:
     Lookup strategy:
     1. Check exact args_hash match (O(1) via index)
     2. If no exact match, scan most recent entries for the tool (max 100)
-       computing edit-distance similarity via SequenceMatcher
+       computing similarity via embedder (cosine) or SequenceMatcher (fallback)
     3. Return best match above threshold, or None
     """
 
@@ -54,11 +72,13 @@ class SQLiteSemanticCache:
         max_entries: int = 1000,
         ttl_seconds: int = 86400,
         fuzzy_scan_limit: int = 100,
+        embedder: Any | None = None,
     ) -> None:
         self._db_path = db_path
         self._max_entries = max_entries
         self._ttl_seconds = ttl_seconds
         self._fuzzy_scan_limit = fuzzy_scan_limit
+        self._embedder = embedder
         self._conn: aiosqlite.Connection | None = None
 
     async def initialize(self) -> None:
@@ -67,6 +87,11 @@ class SQLiteSemanticCache:
         await self._conn.execute(_CREATE_TABLE_SQL)
         for idx_sql in _CREATE_INDEX_SQL:
             await self._conn.execute(idx_sql)
+        # Migration: add embedding column to existing tables
+        try:
+            await self._conn.execute(_ADD_EMBEDDING_COL_SQL)
+        except Exception:
+            pass  # Column already exists
         await self._conn.commit()
 
     async def close(self) -> None:
@@ -111,11 +136,20 @@ class SQLiteSemanticCache:
                 return
 
             now = time.time()
+            embedding_json: str | None = None
+            if self._embedder is not None:
+                try:
+                    vec = self._embedder.embed(args_normalized)
+                    embedding_json = json.dumps(vec)
+                except Exception:
+                    logger.debug("embedder.embed failed, storing without embedding", exc_info=True)
+
             await self._conn.execute(
                 """INSERT INTO result_cache
-                   (tool_name, args_normalized, args_hash, result_text, hit_count, created_at)
-                   VALUES (?, ?, ?, ?, 0, ?)""",
-                (tool_name, args_normalized, args_hash, result, now),
+                   (tool_name, args_normalized, args_hash, result_text,
+                    hit_count, created_at, embedding)
+                   VALUES (?, ?, ?, ?, 0, ?, ?)""",
+                (tool_name, args_normalized, args_hash, result, now, embedding_json),
             )
             await self._conn.commit()
             await self._evict_overflow()
@@ -176,11 +210,24 @@ class SQLiteSemanticCache:
     async def _fuzzy_lookup(
         self, tool_name: str, args_normalized: str, threshold: float
     ) -> CacheHit | None:
-        """Scan recent entries for the tool, compute similarity."""
+        """Scan recent entries for the tool, compute similarity.
+
+        When an embedder is available, uses cosine similarity over stored
+        embedding vectors. Falls back to SequenceMatcher otherwise.
+        """
         if self._conn is None:
             return None
+
+        # If embedder is available, compute query embedding for cosine similarity
+        query_embedding: list[float] | None = None
+        if self._embedder is not None:
+            try:
+                query_embedding = self._embedder.embed(args_normalized)
+            except Exception:
+                logger.debug("embedder.embed failed, falling back to SequenceMatcher", exc_info=True)
+
         cursor = await self._conn.execute(
-            """SELECT id, args_normalized, result_text, hit_count
+            """SELECT id, args_normalized, result_text, hit_count, embedding
                FROM result_cache
                WHERE tool_name = ?
                ORDER BY created_at DESC
@@ -193,8 +240,17 @@ class SQLiteSemanticCache:
         best_score = 0.0
         best_row_id = None
 
-        for row_id, cached_args, result_text, hit_count in rows:
-            score = compute_similarity(args_normalized, cached_args)
+        for row_id, cached_args, result_text, hit_count, embedding_json in rows:
+            score: float
+            if query_embedding is not None and embedding_json is not None:
+                try:
+                    cached_embedding = json.loads(embedding_json)
+                    score = _cosine_similarity(query_embedding, cached_embedding)
+                except (json.JSONDecodeError, TypeError):
+                    score = compute_similarity(args_normalized, cached_args)
+            else:
+                score = compute_similarity(args_normalized, cached_args)
+
             if score >= threshold and score > best_score:
                 best_score = score
                 best_hit = CacheHit(

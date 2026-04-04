@@ -219,6 +219,18 @@ def _run_stats() -> int:
     print(f"  Original:   {original:,} tokens")
     print(f"  Compressed: {compressed:,} tokens")
     print(f"  Saved:      {saved:,} tokens ({ratio:.1%})")
+
+    # Optional cost estimation via tokencost
+    try:
+        from token_sieve.cli.cost_utils import estimate_cost, format_cost, get_model
+
+        model = get_model()
+        cost = estimate_cost(original, compressed, model)
+        if cost is not None:
+            print(f"  Cost saved: {format_cost(cost['saved'])} ({model})")
+    except Exception:
+        pass
+
     print()
     print(f"  {comment}")
     print()

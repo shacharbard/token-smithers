@@ -616,3 +616,53 @@ class TestPhase04ConfigYamlRoundTrip:
         assert cfg.schema_virtualization.enabled is True
         assert cfg.system_prompt.enabled is True
         assert cfg.semantic_cache.enabled is False
+
+
+class TestPhase07ConfigFields:
+    """Phase 07 config fields have correct defaults and validate properly."""
+
+    def test_semantic_cache_embedder_default_none(self) -> None:
+        from token_sieve.config.schema import SemanticCacheConfig
+
+        cfg = SemanticCacheConfig()
+        assert cfg.embedder is None
+
+    def test_semantic_cache_embedder_accepts_model2vec(self) -> None:
+        from token_sieve.config.schema import SemanticCacheConfig
+
+        cfg = SemanticCacheConfig(embedder="model2vec")
+        assert cfg.embedder == "model2vec"
+
+    def test_compaction_warning_threshold_default(self) -> None:
+        cfg = TokenSieveConfig()
+        assert cfg.compaction_warning_threshold == 80000
+
+    def test_compaction_warning_threshold_custom(self) -> None:
+        cfg = TokenSieveConfig(compaction_warning_threshold=50000)
+        assert cfg.compaction_warning_threshold == 50000
+
+    def test_model_default(self) -> None:
+        cfg = TokenSieveConfig()
+        assert cfg.model == "claude-sonnet-4-5"
+
+    def test_model_custom(self) -> None:
+        cfg = TokenSieveConfig(model="gpt-4o")
+        assert cfg.model == "gpt-4o"
+
+    def test_all_new_fields_populated(self) -> None:
+        """Config validates with all Phase 07 fields set."""
+        cfg = TokenSieveConfig(
+            compaction_warning_threshold=100000,
+            model="claude-opus-4",
+            semantic_cache={"embedder": "model2vec"},
+        )
+        assert cfg.compaction_warning_threshold == 100000
+        assert cfg.model == "claude-opus-4"
+        assert cfg.semantic_cache.embedder == "model2vec"
+
+    def test_backward_compatible_without_phase07_fields(self) -> None:
+        """Old configs without Phase 07 fields still work (defaults apply)."""
+        cfg = TokenSieveConfig(backend={"transport": "stdio"})
+        assert cfg.compaction_warning_threshold == 80000
+        assert cfg.model == "claude-sonnet-4-5"
+        assert cfg.semantic_cache.embedder is None

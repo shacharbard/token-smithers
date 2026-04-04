@@ -9,6 +9,7 @@ Runs as a stdio MCP server that Claude Code connects to directly.
 from __future__ import annotations
 
 import asyncio
+import uuid
 from typing import Any
 
 import mcp.server.stdio
@@ -74,6 +75,9 @@ class ProxyServer:
         self._metrics_writer = metrics_writer
         self._virtualized_cache_key: tuple[str, ...] | None = None
         self._virtualized_cache_result: list[types.Tool] | None = None
+        self._session_id: str = str(uuid.uuid4())
+        self._compaction_warned: bool = False
+        self._compaction_warning_threshold: int = 80000
         self._server = self._build_mcp_server()
 
     def rebind_connector(self, connector: Any) -> None:
@@ -350,7 +354,7 @@ class ProxyServer:
             await self._learning_store.record_call(name, "default")
             for event in events:
                 await self._learning_store.record_compression_event(
-                    "session", event, name
+                    self._session_id, event, name
                 )
             # Success — reset failure counter
             self._learning_store_failures = 0
@@ -368,6 +372,25 @@ class ProxyServer:
                     file=__import__("sys").stderr,
                 )
                 self._learning_store = None
+
+    def _check_compaction_warning(self, cumulative_compressed: int) -> str | None:
+        """Return a one-time warning if cumulative compressed tokens exceed threshold.
+
+        Returns None if below threshold or if warning was already emitted.
+        """
+        if self._compaction_warned:
+            return None
+        if cumulative_compressed <= self._compaction_warning_threshold:
+            return None
+
+        self._compaction_warned = True
+        pct = int(cumulative_compressed / self._compaction_warning_threshold * 100)
+        tokens_k = cumulative_compressed / 1000
+        return (
+            f"\n[token-sieve: ~{pct}% of estimated context budget used "
+            f"this session (~{tokens_k:.0f}K compressed tokens). "
+            f"Consider /compact.]"
+        )
 
     async def handle_call_tool(
         self, name: str, arguments: dict[str, Any]
@@ -626,6 +649,14 @@ class ProxyServer:
             "token_sieve.adapters.compression.progressive_disclosure",
             "ProgressiveDisclosureStrategy",
         ),
+        "test_output_compressor": (
+            "token_sieve.adapters.compression.test_output_compressor",
+            "TestOutputCompressor",
+        ),
+        "bm25_sentence_selector": (
+            "token_sieve.adapters.compression.bm25_sentence_selector",
+            "BM25SentenceSelector",
+        ),
     }
 
     @classmethod
@@ -749,6 +780,7 @@ class ProxyServer:
                 max_entries=config.semantic_cache.max_entries,
                 ttl_seconds=config.semantic_cache.ttl_seconds or 86400,
                 similarity_threshold=config.semantic_cache.similarity_threshold,
+                embedder_name=config.semantic_cache.embedder,
             )
             # F1: Register semantic cache as invalidation observer
             invalidator.register_observer(semantic_cache)
@@ -786,6 +818,9 @@ class ProxyServer:
             metrics_collector=metrics_collector,
             metrics_writer=metrics_writer,
         )
+
+        # Phase 07: configure compaction warning threshold
+        proxy._compaction_warning_threshold = config.compaction_warning_threshold
 
         return proxy
 
@@ -897,10 +932,12 @@ class _DeferredSemanticCache:
         max_entries: int = 1000,
         ttl_seconds: int = 86400,
         similarity_threshold: float = 0.85,
+        embedder_name: str | None = None,
     ) -> None:
         self._max_entries = max_entries
         self._ttl_seconds = ttl_seconds
         self._similarity_threshold = similarity_threshold
+        self._embedder_name = embedder_name
         self._cache: Any = None
         self._lock = asyncio.Lock()  # M1: prevent concurrent double-init
 
@@ -930,10 +967,26 @@ class _DeferredSemanticCache:
             if self._cache is None:
                 from token_sieve.adapters.cache.semantic_cache import SQLiteSemanticCache
 
+                embedder = None
+                if self._embedder_name == "model2vec":
+                    try:
+                        from token_sieve.adapters.embed.model2vec_embedder import (
+                            Model2VecEmbedder,
+                        )
+
+                        embedder = Model2VecEmbedder()
+                    except Exception as exc:
+                        print(
+                            f"Warning: failed to load Model2VecEmbedder: {exc}. "
+                            f"Falling back to SequenceMatcher.",
+                            file=__import__("sys").stderr,
+                        )
+
                 self._cache = SQLiteSemanticCache(
                     db_path=":memory:",
                     max_entries=self._max_entries,
                     ttl_seconds=self._ttl_seconds,
+                    embedder=embedder,
                 )
                 await self._cache.initialize()
         return self._cache
