@@ -69,6 +69,7 @@ class ProxyServer:
         self._learning_store = learning_store
         self._learning_store_failures: int = 0
         self._semantic_cache = semantic_cache
+        self._evict_counter: int = 0
         self._metrics_collector = metrics_collector
         self._metrics_writer = metrics_writer
         self._virtualized_cache_key: tuple[str, ...] | None = None
@@ -210,11 +211,13 @@ class ProxyServer:
             for t in tools
         ]
         # Get usage stats from reranker if available
+        # C3 fix: use _stats (not _scores) and access .call_count attribute
+        # (ToolUsageStats is a dataclass, not a dict).
         usage_stats: dict[str, int] | None = None
         if self._reranker is not None:
             usage_stats = {
-                name: data.get("count", 0)
-                for name, data in getattr(self._reranker, "_scores", {}).items()
+                name: data.call_count
+                for name, data in getattr(self._reranker, "_stats", {}).items()
             }
         virtualized = self._schema_virtualizer.virtualize(
             tool_dicts, usage_stats=usage_stats
@@ -249,6 +252,9 @@ class ProxyServer:
                             "inputSchema": t.inputSchema or {}}, separators=(",", ":")))
             for t in virtualized
         )
+        # M5: Token counts are approximated at 4 chars/token (JSON character
+        # estimation). This is a rough heuristic; actual BPE tokenization
+        # varies by model. Sufficient for analytics/savings reporting.
         orig_tokens = max(1, orig_size // 4)
         virt_tokens = max(1, virt_size // 4) if virt_size > 0 else 0
         if orig_tokens <= virt_tokens:
@@ -270,13 +276,12 @@ class ProxyServer:
         self, name: str, arguments: dict[str, Any]
     ) -> types.CallToolResult | None:
         """Check semantic cache for a similar prior result."""
-        from token_sieve.adapters.cache.param_normalizer import (
-            compute_args_hash,
-            normalize_args,
-        )
+        from token_sieve.adapters.cache.param_normalizer import normalize_args
 
-        # F4: Run TTL eviction before lookup
-        await self._semantic_cache.evict_expired()
+        # F4: Run TTL eviction periodically (every 50 cache checks)
+        self._evict_counter += 1
+        if self._evict_counter % 50 == 0:
+            await self._semantic_cache.evict_expired()
 
         args_normalized = normalize_args(arguments)
         # F3: Use configured threshold instead of hardcoded 0.85
@@ -331,6 +336,15 @@ class ProxyServer:
         Tolerates up to _MAX_LEARNING_FAILURES consecutive errors before
         permanently disabling the store.  A successful call resets the
         failure counter so transient errors don't accumulate.
+
+        M3 note: record_call and record_compression_event are separate DB
+        operations. If record_call succeeds but a subsequent
+        record_compression_event fails, the call count will be incremented
+        without corresponding compression events. This partial-commit
+        inconsistency is acceptable because: (a) the data is advisory
+        analytics, not transactional; (b) wrapping in a single transaction
+        would require exposing transaction control through the LearningStore
+        protocol, adding complexity for minimal benefit.
         """
         try:
             await self._learning_store.record_call(name, "default")
@@ -406,6 +420,19 @@ class ProxyServer:
         if result.isError:
             return result
 
+        # C2 fix: pre-fetch disabled adapters in async context so the sync
+        # pipeline.process() doesn't need to call async get_pipeline_config().
+        disabled_adapters: list[str] = []
+        if self._learning_store is not None:
+            try:
+                pc = await self._learning_store.get_pipeline_config(name, "default")
+                if pc is not None:
+                    is_reeval = pc.eval_count > 0 and pc.eval_count % 50 == 0
+                    if not is_reeval:
+                        disabled_adapters = list(pc.disabled_adapters)
+            except Exception:
+                pass
+
         # Process text content through compression pipeline
         compressed_content: list[types.TextContent | types.ImageContent | types.EmbeddedResource] = []
         events_for_learning: list[Any] = []
@@ -424,7 +451,10 @@ class ProxyServer:
                 envelope = ContentEnvelope(
                     content=item.text,
                     content_type=ContentType.TEXT,
-                    metadata={"source_tool": name},
+                    metadata={
+                        "source_tool": name,
+                        "disabled_adapters": ",".join(disabled_adapters) if disabled_adapters else None,
+                    },
                 )
                 compressed_envelope, events = self._pipeline.process(envelope)
 
@@ -435,10 +465,17 @@ class ProxyServer:
                     events_for_learning.append(event)
 
                 # Transparency footer: show compression stats
+                # H4 fix: use the last non-regret event's compressed_tokens
+                # (regret events are reverted and not applied to the envelope).
                 output_text = compressed_envelope.content
                 if events:
                     total_original = events[0].original_tokens
-                    total_compressed = events[-1].compressed_tokens
+                    applied = [e for e in events if not e.is_regret]
+                    total_compressed = (
+                        applied[-1].compressed_tokens
+                        if applied
+                        else events[-1].compressed_tokens
+                    )
                     if total_compressed < total_original:
                         output_text += (
                             f"\n[Compressed: {total_original}\u2192"
@@ -465,8 +502,8 @@ class ProxyServer:
         if self._call_cache is not None:
             self._call_cache.put(name, arguments, final_result)
 
-        # Store in semantic cache
-        if self._semantic_cache is not None:
+        # Store in semantic cache (H2: only cache read-only tools)
+        if self._semantic_cache is not None and self._is_cacheable(name):
             await self._store_semantic_cache(name, arguments, final_result)
 
         # Record usage in reranker
@@ -570,8 +607,16 @@ class ProxyServer:
             "KeyAliasingStrategy",
         ),
         "ast_skeleton": (
-            "token_sieve.adapters.compression.ast_skeleton",
-            "ASTSkeletonExtractor",
+            "token_sieve.adapters.compression.tree_sitter_ast",
+            "TreeSitterASTExtractor",
+        ),
+        "tree_sitter_ast": (
+            "token_sieve.adapters.compression.tree_sitter_ast",
+            "TreeSitterASTExtractor",
+        ),
+        "json_code_unwrapper": (
+            "token_sieve.adapters.compression.json_code_unwrapper",
+            "JsonCodeUnwrapper",
         ),
         "graph_encoder": (
             "token_sieve.adapters.compression.graph_encoder",
@@ -617,6 +662,16 @@ class ProxyServer:
                         file=__import__("sys").stderr,
                     )
                     continue
+
+                if adapter_cfg.name == "ast_skeleton":
+                    import warnings
+
+                    warnings.warn(
+                        "Adapter name 'ast_skeleton' is deprecated; "
+                        "use 'tree_sitter_ast' instead.",
+                        DeprecationWarning,
+                        stacklevel=2,
+                    )
 
                 module_path, class_name = registry_entry
                 try:
@@ -732,10 +787,6 @@ class ProxyServer:
             metrics_writer=metrics_writer,
         )
 
-        # Self-tuning interval (calls between threshold adjustments)
-        proxy._self_tune_interval = 50
-        proxy._self_tune_call_count = 0
-
         return proxy
 
 
@@ -769,16 +820,21 @@ class _DeferredLearningStore:
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
         self._store: Any = None
+        self._lock = asyncio.Lock()  # M1: prevent concurrent double-init
 
     async def _ensure_connected(self) -> Any:
-        if self._store is None:
-            import os
+        if self._store is not None:
+            return self._store
+        async with self._lock:
+            # Double-check after acquiring lock
+            if self._store is None:
+                import os
 
-            from token_sieve.adapters.learning.sqlite_store import SQLiteLearningStore
+                from token_sieve.adapters.learning.sqlite_store import SQLiteLearningStore
 
-            expanded = os.path.expanduser(self._db_path)
-            os.makedirs(os.path.dirname(expanded), exist_ok=True) if os.path.dirname(expanded) else None
-            self._store = await SQLiteLearningStore.connect(expanded)
+                expanded = os.path.expanduser(self._db_path)
+                os.makedirs(os.path.dirname(expanded), exist_ok=True) if os.path.dirname(expanded) else None
+                self._store = await SQLiteLearningStore.connect(expanded)
         return self._store
 
     async def record_call(self, tool_name: str, server_id: str) -> None:
@@ -821,6 +877,17 @@ class _DeferredLearningStore:
         store = await self._ensure_connected()
         return await store.lookup_similar(tool_name, args_normalized, threshold)
 
+    # C2: pipeline_config delegations for async pre-fetch in handle_call_tool
+    async def get_pipeline_config(
+        self, tool_name: str, server_id: str
+    ) -> Any:
+        store = await self._ensure_connected()
+        return await store.get_pipeline_config(tool_name, server_id)
+
+    async def save_pipeline_config(self, config: Any) -> None:
+        store = await self._ensure_connected()
+        await store.save_pipeline_config(config)
+
 
 class _DeferredSemanticCache:
     """Deferred semantic cache — wraps config for lazy async init."""
@@ -835,6 +902,7 @@ class _DeferredSemanticCache:
         self._ttl_seconds = ttl_seconds
         self._similarity_threshold = similarity_threshold
         self._cache: Any = None
+        self._lock = asyncio.Lock()  # M1: prevent concurrent double-init
 
     @property
     def similarity_threshold(self) -> float:
@@ -845,16 +913,29 @@ class _DeferredSemanticCache:
         """Clear the underlying cache (InvalidationObserver protocol)."""
         self._cache = None
 
-    async def _ensure_initialized(self) -> Any:
-        if self._cache is None:
-            from token_sieve.adapters.cache.semantic_cache import SQLiteSemanticCache
+    def invalidate(self, tool_name: str) -> None:
+        """M6: Per-tool invalidation delegates to full invalidation.
 
-            self._cache = SQLiteSemanticCache(
-                db_path=":memory:",
-                max_entries=self._max_entries,
-                ttl_seconds=self._ttl_seconds,
-            )
-            await self._cache.initialize()
+        The in-memory semantic cache doesn't support per-key eviction,
+        so we clear everything. This satisfies the InvalidationObserver
+        protocol which expects an invalidate(tool_name) method.
+        """
+        self.invalidate_all()
+
+    async def _ensure_initialized(self) -> Any:
+        if self._cache is not None:
+            return self._cache
+        async with self._lock:
+            # Double-check after acquiring lock
+            if self._cache is None:
+                from token_sieve.adapters.cache.semantic_cache import SQLiteSemanticCache
+
+                self._cache = SQLiteSemanticCache(
+                    db_path=":memory:",
+                    max_entries=self._max_entries,
+                    ttl_seconds=self._ttl_seconds,
+                )
+                await self._cache.initialize()
         return self._cache
 
     async def lookup_similar(

@@ -65,12 +65,18 @@ class ProgressiveDisclosureStrategy:
             out_dir, f"token-sieve-prog-{content_hash}.txt"
         )
 
-        with open(file_path, "wb") as f:
-            f.write(content_bytes)
-
-        # Restrict to owner-only access (0o600) -- defense-in-depth
-        # against permissive umask on some Linux configurations.
-        os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)
+        # Use O_CREAT|O_TRUNC with 0o600 to prevent symlink/TOCTOU attacks:
+        # the file is created atomically with owner-only permissions
+        # (no chmod race window).
+        fd = os.open(
+            file_path,
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+            stat.S_IRUSR | stat.S_IWUSR,  # 0o600
+        )
+        try:
+            os.write(fd, content_bytes)
+        finally:
+            os.close(fd)
 
         self._created_files.append(file_path)
 

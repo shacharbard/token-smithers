@@ -200,7 +200,10 @@ def generate_sieve_config(server: McpServerEntry) -> str:
     if server.env:
         backend["env"] = server.env
 
-    config = {"backend": backend}
+    config: dict = {
+        "backend": backend,
+        "schema_virtualization": {"enabled": True},
+    }
     return header + yaml.dump(config, default_flow_style=False)
 
 
@@ -326,21 +329,28 @@ def backup_config(path: Path) -> Path:
         Path to the backup file.
     """
     backup_path = path.with_suffix(path.suffix + ".backup")
-    shutil.copy2(path, backup_path)
+    # H3: preserve oldest backup -- only write if no backup exists yet
+    if not backup_path.exists():
+        shutil.copy2(path, backup_path)
     return backup_path
 
 
 def write_config(config_file: McpConfigFile) -> None:
     """Write the modified config back to disk.
 
+    H1 fix: uses atomic write (write to .tmp, then os.rename) so a crash
+    mid-write cannot leave a truncated config file.
+
     Preserves all non-mcpServers keys from raw_data.
 
     Args:
         config_file: The config file with updated raw_data.
     """
-    config_file.path.write_text(
-        json.dumps(config_file.raw_data, indent=2) + "\n"
-    )
+    import os
+
+    tmp_path = config_file.path.with_suffix(config_file.path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(config_file.raw_data, indent=2) + "\n")
+    os.rename(str(tmp_path), str(config_file.path))
 
 
 def run_setup(undo: bool = False) -> int:

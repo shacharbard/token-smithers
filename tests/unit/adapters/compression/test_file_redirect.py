@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import stat
 import tempfile
 
 import pytest
@@ -171,3 +172,36 @@ class TestFileRedirectCleanup:
         strategy.compress(envelope)
         strategy.cleanup()
         strategy.cleanup()  # Should not raise
+
+
+class TestFileRedirectSecureTempFile:
+    """C1: Temp files must be created with O_EXCL to prevent symlink/TOCTOU attacks."""
+
+    def test_temp_file_has_owner_only_permissions(self, tmp_path):
+        """Temp files must have 0o600 (owner-only) permissions."""
+        content = "sensitive data " * 200
+        envelope = ContentEnvelope(content=content, content_type=ContentType.TEXT)
+        strategy = FileRedirectStrategy(
+            threshold_tokens=10, output_dir=str(tmp_path)
+        )
+
+        result = strategy.compress(envelope)
+        path = result.content.split("Result written to ")[1].split(",")[0]
+        file_stat = os.stat(path)
+        perms = stat.S_IMODE(file_stat.st_mode)
+        assert perms == 0o600, f"Expected 0o600, got {oct(perms)}"
+
+    def test_temp_file_not_world_readable(self, tmp_path):
+        """Temp files must not have group or other read permissions."""
+        content = "sensitive data " * 200
+        envelope = ContentEnvelope(content=content, content_type=ContentType.TEXT)
+        strategy = FileRedirectStrategy(
+            threshold_tokens=10, output_dir=str(tmp_path)
+        )
+
+        result = strategy.compress(envelope)
+        path = result.content.split("Result written to ")[1].split(",")[0]
+        file_stat = os.stat(path)
+        perms = stat.S_IMODE(file_stat.st_mode)
+        # No group/other bits should be set
+        assert perms & 0o077 == 0, f"Group/other bits set: {oct(perms)}"

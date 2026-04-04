@@ -287,13 +287,20 @@ class TestCompressionConfigAdapters:
         assert cfg.adapters[0].settings["sentence_count"] == 3
 
     def test_size_gate_threshold_field(self) -> None:
-        """CompressionConfig has a size_gate_threshold field."""
+        """CompressionConfig has a size_gate_threshold field defaulting to 500."""
         cfg = CompressionConfig()
-        assert cfg.size_gate_threshold == 2000
+        assert cfg.size_gate_threshold == 500
 
     def test_custom_size_gate_threshold(self) -> None:
         cfg = CompressionConfig(size_gate_threshold=5000)
         assert cfg.size_gate_threshold == 5000
+
+    def test_phase06_adapters_enabled_by_default(self) -> None:
+        """json_code_unwrapper and tree_sitter_ast should be enabled by default."""
+        cfg = CompressionConfig()
+        adapter_map = {a.name: a for a in cfg.adapters}
+        assert adapter_map["json_code_unwrapper"].enabled is True
+        assert adapter_map["tree_sitter_ast"].enabled is True
 
     def test_backward_compatibility_no_adapters(self) -> None:
         """Config without adapters key uses default adapter list."""
@@ -461,7 +468,7 @@ class TestSchemaVirtualizationConfig:
         from token_sieve.config.schema import SchemaVirtualizationConfig
 
         cfg = SchemaVirtualizationConfig()
-        assert cfg.enabled is False
+        assert cfg.enabled is True
         assert cfg.tier == 2
         assert cfg.frequent_call_threshold == 3
 
@@ -495,7 +502,7 @@ class TestSchemaVirtualizationConfig:
         from token_sieve.config.schema import SchemaVirtualizationConfig
 
         assert isinstance(cfg.schema_virtualization, SchemaVirtualizationConfig)
-        assert cfg.schema_virtualization.enabled is False
+        assert cfg.schema_virtualization.enabled is True
 
 
 class TestSystemPromptConfig:
@@ -539,7 +546,7 @@ class TestSemanticCacheConfig:
 
         cfg = SemanticCacheConfig()
         assert cfg.enabled is False
-        assert cfg.similarity_threshold == 0.85
+        assert cfg.similarity_threshold == 1.0  # exact-match only; fuzzy disabled
         assert cfg.max_entries == 1000
         assert cfg.ttl_seconds is None
 
@@ -595,6 +602,6 @@ class TestPhase04ConfigYamlRoundTrip:
         cfg = TokenSieveConfig(backend={"transport": "stdio"})
         assert cfg.learning.enabled is True
         assert cfg.dashboard.enabled is True
-        assert cfg.schema_virtualization.enabled is False
+        assert cfg.schema_virtualization.enabled is True
         assert cfg.system_prompt.enabled is True
         assert cfg.semantic_cache.enabled is False

@@ -207,6 +207,39 @@ class TestCompressionPipeline:
         assert events[0].compressed_tokens == 6  # len("[c] hi")
 
 
+class TestPipelineCounterEfficiency:
+    """Fix 2: counter.count() should not be called redundantly per strategy."""
+
+    def test_counter_not_called_for_original_tokens_each_strategy(self):
+        """With size gate, original_tokens should be carried forward, not recomputed."""
+        from unittest.mock import MagicMock
+
+        from token_sieve.domain.pipeline import CompressionPipeline
+
+        counter = MagicMock()
+        # Current (broken): size_gate=200, strategy1_orig=200, strategy1_comp=180,
+        #   strategy2_orig=180, strategy2_comp=160 → 5 calls
+        # Fixed: size_gate=200, strategy1_comp=180, strategy2_comp=160 → 3 calls
+        counter.count = MagicMock(side_effect=[200, 180, 160])
+        pipeline = CompressionPipeline(counter=counter, size_gate_threshold=100)
+        pipeline.register(ContentType.TEXT, AlwaysCompressStrategy(prefix="[A]"))
+        pipeline.register(ContentType.TEXT, AlwaysCompressStrategy(prefix="[B]"))
+
+        envelope = ContentEnvelope(content="x" * 200, content_type=ContentType.TEXT)
+        _, events = pipeline.process(envelope)
+
+        # 3 calls: 1 for size gate, 1 per strategy compressed output
+        # (original_tokens carried forward from previous step, not recomputed)
+        assert counter.count.call_count == 3
+        assert len(events) == 2
+        # First strategy: original_tokens from size gate (200), compressed 180
+        assert events[0].original_tokens == 200
+        assert events[0].compressed_tokens == 180
+        # Second strategy: original_tokens from first strategy output (180), compressed 160
+        assert events[1].original_tokens == 180
+        assert events[1].compressed_tokens == 160
+
+
 class TestPipelineErrorBoundary:
     """Finding 3: strategy exceptions must not abort the chain."""
 

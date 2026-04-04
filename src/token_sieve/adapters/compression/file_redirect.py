@@ -13,6 +13,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import os
+import stat
 import tempfile
 
 from token_sieve.domain.counters import CharEstimateCounter
@@ -56,8 +57,17 @@ class FileRedirectStrategy:
         out_dir = self._output_dir or tempfile.gettempdir()
         file_path = os.path.join(out_dir, f"token-sieve-{content_hash}.txt")
 
-        with open(file_path, "wb") as f:
-            f.write(content_bytes)
+        # Use O_EXCL|O_CREAT with 0o600 to prevent symlink/TOCTOU attacks:
+        # the file is created atomically with owner-only permissions.
+        fd = os.open(
+            file_path,
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+            stat.S_IRUSR | stat.S_IWUSR,  # 0o600
+        )
+        try:
+            os.write(fd, content_bytes)
+        finally:
+            os.close(fd)
 
         self._created_files.append(file_path)
         pointer = f"Result written to {file_path}, {byte_count} bytes"

@@ -58,25 +58,23 @@ class CompressionPipeline:
         events: list[CompressionEvent] = []
 
         # Size gate: skip all compression for small content
+        current_tokens: int | None = None
         if self._size_gate_threshold is not None:
-            token_count = self._counter.count(envelope.content)
-            if token_count <= self._size_gate_threshold:
+            current_tokens = self._counter.count(envelope.content)
+            if current_tokens <= self._size_gate_threshold:
                 return envelope, events
 
         chain = self._routes.get(envelope.content_type, [])
 
-        # Per-tool filtering: skip disabled adapters if config exists
+        # Per-tool filtering: skip disabled adapters.
+        # C2 fix: disabled_adapters are passed via envelope metadata as a
+        # comma-separated string by the async caller (proxy.py handle_call_tool)
+        # to avoid sync→async mismatch. The pipeline_config_store attribute is
+        # retained for backward compat but no longer called from this sync method.
         disabled: set[str] = set()
-        source_tool = envelope.metadata.get("source_tool") if envelope.metadata else None
-        if source_tool and self.pipeline_config_store is not None:
-            config = self.pipeline_config_store.get_pipeline_config(
-                source_tool, "default"
-            )
-            if config is not None:
-                # Re-evaluation boundary: run full chain every 50 calls
-                is_reeval = config.eval_count > 0 and config.eval_count % 50 == 0
-                if not is_reeval:
-                    disabled = set(config.disabled_adapters)
+        da_raw = envelope.metadata.get("disabled_adapters") if envelope.metadata else None
+        if da_raw:
+            disabled = set(da_raw.split(","))
 
         for strategy in chain:
             strategy_name = type(strategy).__name__
@@ -97,7 +95,12 @@ class CompressionPipeline:
                 continue
 
             try:
-                original_tokens = self._counter.count(envelope.content)
+                # Carry forward token count from size gate or previous strategy
+                original_tokens = (
+                    current_tokens
+                    if current_tokens is not None
+                    else self._counter.count(envelope.content)
+                )
                 compressed_envelope = strategy.compress(envelope)
                 compressed_tokens = self._counter.count(
                     compressed_envelope.content
@@ -124,6 +127,7 @@ class CompressionPipeline:
                 # Revert: don't apply this strategy's output when tracking is active
                 continue
             envelope = compressed_envelope
+            current_tokens = compressed_tokens
 
         return envelope, events
 

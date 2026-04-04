@@ -28,6 +28,8 @@ CONTENT_SPECIFIC = frozenset({
     "progressive_disclosure",
     "graph_encoder",
     "key_aliasing",
+    "json_code_unwrapper",
+    "tree_sitter_ast",
 })
 
 FORMAT = frozenset({

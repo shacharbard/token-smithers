@@ -87,11 +87,11 @@ class TestSizeGateSpecific:
         assert gate.can_handle(envelope) is False
 
     def test_default_threshold(self, make_envelope):
-        """Default threshold should be approximately 2000 tokens."""
+        """Default threshold should match schema.py CompressionConfig (500)."""
         from token_sieve.adapters.compression.size_gate import SizeGate
 
         gate = SizeGate()
-        assert gate.threshold == 2000
+        assert gate.threshold == 500
 
 
 class TestShouldCompress:

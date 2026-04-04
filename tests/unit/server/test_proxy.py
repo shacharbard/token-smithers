@@ -298,7 +298,7 @@ class TestCreateFromConfig:
                     {"name": "whitespace_normalizer"},
                     {"name": "smart_truncation"},
                 ],
-                "size_gate_threshold": 2000,
+                "size_gate_threshold": 500,
             }
         )
         proxy = ProxyServer.create_from_config(config)
@@ -880,11 +880,11 @@ class TestSimilarityThresholdFromConfig:
 
 
 class TestTTLEvictionRuns:
-    """F4: TTL eviction must run on cache check."""
+    """F4: TTL eviction runs rate-limited (every 50 cache checks)."""
 
     @pytest.mark.asyncio
-    async def test_evict_expired_called_before_lookup(self) -> None:
-        """evict_expired() must be called during _check_semantic_cache."""
+    async def test_evict_expired_rate_limited(self) -> None:
+        """evict_expired() is called every 50th _check_semantic_cache, not every call."""
         from token_sieve.server.proxy import ProxyServer
 
         fake_semantic_cache = AsyncMock()
@@ -905,9 +905,18 @@ class TestTTLEvictionRuns:
             semantic_cache=fake_semantic_cache,
         )
 
-        await proxy.handle_call_tool("read_file", {"path": "/a"})
+        # First 49 calls should NOT trigger eviction
+        for _ in range(49):
+            await proxy.handle_call_tool("read_file", {"path": "/a"})
+        assert fake_semantic_cache.evict_expired.await_count == 0
 
-        fake_semantic_cache.evict_expired.assert_awaited_once()
+        # 50th call should trigger eviction
+        await proxy.handle_call_tool("read_file", {"path": "/a"})
+        assert fake_semantic_cache.evict_expired.await_count == 1
+
+        # 51st call should NOT trigger again
+        await proxy.handle_call_tool("read_file", {"path": "/a"})
+        assert fake_semantic_cache.evict_expired.await_count == 1
 
 
 class TestPipelineCleanup:

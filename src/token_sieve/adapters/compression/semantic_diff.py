@@ -7,6 +7,7 @@ Produces human-readable diff format with Added/Removed/Changed sections.
 
 from __future__ import annotations
 
+import dataclasses
 import difflib
 import json
 from typing import Any
@@ -56,19 +57,13 @@ class SemanticDiffStrategy:
 
         if previous == envelope.content:
             # No changes
-            return ContentEnvelope(
-                content="[No changes since last read]",
-                content_type=envelope.content_type,
-                metadata=envelope.metadata,
+            return dataclasses.replace(
+                envelope, content="[No changes since last read]"
             )
 
         # Compute human-readable diff
         diff_text = self._compute_diff(previous, envelope.content)
-        return ContentEnvelope(
-            content=diff_text,
-            content_type=envelope.content_type,
-            metadata=envelope.metadata,
-        )
+        return dataclasses.replace(envelope, content=diff_text)
 
     @staticmethod
     def _compute_diff(old: str, new: str) -> str:

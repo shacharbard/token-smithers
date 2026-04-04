@@ -52,11 +52,11 @@ AI coding tools like Claude Code have **built-in tools** (Read, Edit, Grep, Bash
 |------|------|:-:|
 | Read, Edit, Grep, Bash, Write, Glob | Built-in | -- |
 | Filesystem MCP, GitHub MCP, database MCP | MCP server | Yes |
-| Already-optimized MCPs (jCodeMunch, jDocMunch, context-mode) | MCP server | Skip |
+| Already-optimized MCPs (jCodeMunch, jDocMunch, context-mode) | MCP server | Yes — for schemas |
 
 **If you use standard MCP servers** (filesystem, GitHub, database, etc.) that return raw uncompressed data, Token Smithers gives the biggest savings — up to 62% across all content types.
 
-**If you already use optimization tools** like jCodeMunch, jDocMunch, or context-mode, those handle most of the heavy lifting for code reads, doc reads, and command output. Token Smithers still adds value for MCP servers those tools don't cover — API servers (GitHub, EXA), memory stores (Muninn), documentation fetchers (context7), and any future MCP server you add.
+**If you already use optimization tools** like jCodeMunch, jDocMunch, or context-mode, those handle most of the heavy lifting for code reads, doc reads, and command output. Token Smithers still adds value for schema virtualization (compressing tool definitions) and for MCP servers those tools don't cover — API servers (GitHub, EXA), memory stores (Muninn), documentation fetchers (context7), and any future MCP server you add.
 
 ## Savings by MCP Server
 

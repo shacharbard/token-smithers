@@ -59,6 +59,8 @@ def _default_adapters() -> list[AdapterConfig]:
         AdapterConfig(name="log_level_filter", enabled=False),
         AdapterConfig(name="error_stack_compressor", enabled=False),
         AdapterConfig(name="code_comment_stripper", enabled=False),
+        AdapterConfig(name="json_code_unwrapper", enabled=True),
+        AdapterConfig(name="tree_sitter_ast", enabled=True),
         # Sentence scorer + RLE
         AdapterConfig(name="sentence_scorer", enabled=False),
         AdapterConfig(name="rle_encoder"),
@@ -81,7 +83,7 @@ class CompressionConfig(BaseModel):
     strategy: str = "passthrough"
     max_tokens: int = 4096
     dedup_window: int = 50
-    size_gate_threshold: int = 2000
+    size_gate_threshold: int = 500
     adapters: list[AdapterConfig] = Field(default_factory=_default_adapters)
 
     @field_validator("max_tokens")
@@ -173,7 +175,7 @@ class SchemaVirtualizationConfig(BaseModel):
 
     model_config = {"extra": "forbid"}
 
-    enabled: bool = False
+    enabled: bool = True
     tier: Literal[1, 2, 3] = 2
     frequent_call_threshold: int = 3
 
@@ -200,7 +202,7 @@ class SemanticCacheConfig(BaseModel):
     model_config = {"extra": "forbid"}
 
     enabled: bool = False
-    similarity_threshold: float = 0.85
+    similarity_threshold: float = 1.0  # exact-match only; fuzzy disabled (30% false-hit rate)
     max_entries: int = 1000
     ttl_seconds: int | None = None
 

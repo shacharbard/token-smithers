@@ -32,7 +32,7 @@ from token_sieve.adapters.compression.graph_encoder import GraphAdjacencyEncoder
 
 def build_pipeline() -> CompressionPipeline:
     counter = CharEstimateCounter()
-    pipeline = CompressionPipeline(counter, size_gate_threshold=200)
+    pipeline = CompressionPipeline(counter, size_gate_threshold=500)
     for adapter in [
         WhitespaceNormalizer(), NullFieldElider(), PathPrefixDeduplicator(),
         TimestampNormalizer(), RunLengthEncoder(), ToonCompressor(),

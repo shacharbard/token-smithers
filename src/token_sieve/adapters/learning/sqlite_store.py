@@ -95,7 +95,7 @@ class SQLiteLearningStore:
         # Enable WAL and performance pragmas (no-op for :memory:)
         if db_path != ":memory:":
             await db.execute("PRAGMA journal_mode=WAL")
-            await db.execute("PRAGMA synchronous=NORMAL")
+            await db.execute("PRAGMA synchronous=FULL")  # M2: FULL for durability
         await db.execute("PRAGMA cache_size=64000")
         await db.execute("PRAGMA foreign_keys=ON")
 

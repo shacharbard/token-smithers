@@ -156,6 +156,32 @@ class TestValidatorMatchesRegistry:
             )
 
 
+class TestValidatorPhase06Adapters:
+    """Phase 06 adapters must be in CONTENT_SPECIFIC validator set."""
+
+    def test_json_code_unwrapper_in_content_specific(self):
+        """json_code_unwrapper must be in CONTENT_SPECIFIC frozenset."""
+        from token_sieve.config.validator import CONTENT_SPECIFIC
+
+        assert "json_code_unwrapper" in CONTENT_SPECIFIC
+
+    def test_tree_sitter_ast_in_content_specific(self):
+        """tree_sitter_ast must be in CONTENT_SPECIFIC frozenset."""
+        from token_sieve.config.validator import CONTENT_SPECIFIC
+
+        assert "tree_sitter_ast" in CONTENT_SPECIFIC
+
+    def test_phase06_ordering_valid(self, validate):
+        """Phase 06 adapters in content-specific phase should not warn."""
+        warnings = validate([
+            "whitespace_normalizer",
+            "json_code_unwrapper",
+            "tree_sitter_ast",
+            "toon_compressor",
+        ])
+        assert warnings == [], f"Unexpected warnings: {warnings}"
+
+
 class TestValidateConfigCrossSection:
     """Phase 04 cross-section config validation."""
 
