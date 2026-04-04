@@ -546,7 +546,7 @@ class TestSemanticCacheConfig:
 
         cfg = SemanticCacheConfig()
         assert cfg.enabled is False
-        assert cfg.similarity_threshold == 0.85
+        assert cfg.similarity_threshold == 1.0  # exact-match only; fuzzy disabled
         assert cfg.max_entries == 1000
         assert cfg.ttl_seconds is None
 

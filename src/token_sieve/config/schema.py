@@ -202,7 +202,7 @@ class SemanticCacheConfig(BaseModel):
     model_config = {"extra": "forbid"}
 
     enabled: bool = False
-    similarity_threshold: float = 0.85
+    similarity_threshold: float = 1.0  # exact-match only; fuzzy disabled (30% false-hit rate)
     max_entries: int = 1000
     ttl_seconds: int | None = None
 
