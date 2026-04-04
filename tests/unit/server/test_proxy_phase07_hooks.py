@@ -1,11 +1,15 @@
-"""Tests for Phase 07 proxy hooks: adapter registry + pipeline wiring.
+"""Tests for Phase 07 proxy hooks: adapter registry, pipeline, session_id, compaction.
 
 Verifies:
 - test_output_compressor and bm25_sentence_selector exist in _ADAPTER_REGISTRY
 - Default adapter ordering includes both new adapters in correct positions
 - TestOutputCompressor strips PASSED lines from pytest output in pipeline
+- ProxyServer._session_id is a valid UUID (not hardcoded "session")
+- Compaction early-warning triggers at configurable threshold
 """
 from __future__ import annotations
+
+import uuid
 
 import pytest
 
@@ -110,3 +114,70 @@ class TestTestOutputCompressorInPipeline:
         # FAILED lines and summary should be preserved
         assert "FAILED" in result.content
         assert "1 failed" in result.content
+
+
+class TestSessionId:
+    """ProxyServer uses a real UUID session_id, not hardcoded 'session'."""
+
+    def test_session_id_is_uuid(self) -> None:
+        """ProxyServer._session_id is a valid UUID string."""
+        from token_sieve.config.schema import TokenSieveConfig
+
+        config = TokenSieveConfig()
+        proxy = ProxyServer.create_from_config(config)
+        # Should be a valid UUID, not "session"
+        assert proxy._session_id != "session"
+        # Validate it parses as UUID
+        parsed = uuid.UUID(proxy._session_id)
+        assert str(parsed) == proxy._session_id
+
+
+class TestCompactionWarning:
+    """Compaction early-warning fires when cumulative tokens exceed threshold."""
+
+    def test_compaction_warning_triggers(self) -> None:
+        """After exceeding threshold, _check_compaction_warning returns message."""
+        from token_sieve.config.schema import TokenSieveConfig
+
+        config = TokenSieveConfig(compaction_warning_threshold=1000)
+        proxy = ProxyServer.create_from_config(config)
+
+        # Should not warn below threshold
+        result = proxy._check_compaction_warning(500)
+        assert result is None
+
+        # Should warn above threshold
+        result = proxy._check_compaction_warning(1500)
+        assert result is not None
+        assert "token-sieve" in result
+        assert "compact" in result.lower() or "context" in result.lower()
+
+    def test_compaction_warning_fires_once(self) -> None:
+        """Subsequent calls after warning don't repeat it."""
+        from token_sieve.config.schema import TokenSieveConfig
+
+        config = TokenSieveConfig(compaction_warning_threshold=1000)
+        proxy = ProxyServer.create_from_config(config)
+
+        # First call over threshold triggers warning
+        result1 = proxy._check_compaction_warning(2000)
+        assert result1 is not None
+
+        # Second call should not warn again
+        result2 = proxy._check_compaction_warning(3000)
+        assert result2 is None
+
+    def test_compaction_warning_configurable(self) -> None:
+        """Threshold is configurable via config."""
+        from token_sieve.config.schema import TokenSieveConfig
+
+        config = TokenSieveConfig(compaction_warning_threshold=50000)
+        proxy = ProxyServer.create_from_config(config)
+
+        # Below custom threshold - no warning
+        result = proxy._check_compaction_warning(40000)
+        assert result is None
+
+        # Above custom threshold - warning
+        result = proxy._check_compaction_warning(60000)
+        assert result is not None

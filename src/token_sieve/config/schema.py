@@ -235,6 +235,8 @@ class TokenSieveConfig(BaseModel):
     )
     system_prompt: SystemPromptConfig = Field(default_factory=SystemPromptConfig)
     semantic_cache: SemanticCacheConfig = Field(default_factory=SemanticCacheConfig)
+    compaction_warning_threshold: int = 80000  # Cumulative compressed tokens before warning
+    model: str = "claude-sonnet-4-5"  # Default model for cost estimation
 
 
 def load_config(path: Path) -> TokenSieveConfig:
