@@ -27,6 +27,9 @@ embeddings = [
 ranking = [
     "rank-bm25>=0.2",
 ]
+costs = [
+    "tokencost>=0.2",
+]
 ast = [
     "tree-sitter>=0.23.0",
     "tree-sitter-python>=0.23.0",
