@@ -10,8 +10,8 @@ from __future__ import annotations
 from token_sieve.domain.counters import CharEstimateCounter
 from token_sieve.domain.model import ContentEnvelope
 
-# Default threshold in estimated tokens (~2K tokens)
-_DEFAULT_THRESHOLD = 2000
+# Default threshold in estimated tokens — synced with schema.py CompressionConfig
+_DEFAULT_THRESHOLD = 500
 
 
 class SizeGate:
