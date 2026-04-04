@@ -85,19 +85,11 @@ class TestCreateFromConfigPhase04:
 
 
 class TestSelfTuning:
-    """Self-tuning adjusts compression thresholds based on history."""
+    """Self-tuning adjusts compression thresholds based on history.
 
-    def test_self_tuning_adjusts_threshold(self) -> None:
-        """After sufficient compression events, size_gate_threshold is adjusted."""
-        from token_sieve.domain.model import CompressionEvent, ContentType
+    Note: _self_tune_interval and _self_tune_call_count were removed as dead code
+    (never read outside of create_from_config). Self-tuning is a future feature
+    that will be implemented when the learning store provides threshold feedback.
+    """
 
-        config = TokenSieveConfig(
-            learning={"enabled": True, "db_path": ":memory:"},
-        )
-
-        proxy = ProxyServer.create_from_config(config)
-
-        # Simulate that self-tuning has data
-        # The proxy should have a _self_tuning_call_count or similar mechanism
-        assert hasattr(proxy, "_self_tune_interval")
-        assert proxy._self_tune_interval > 0
+    pass
