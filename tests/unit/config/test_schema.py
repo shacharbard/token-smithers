@@ -256,6 +256,12 @@ class TestCompressionConfigAdapters:
         for adapter in cfg.adapters:
             assert isinstance(adapter, AdapterConfig)
 
+    def test_yaml_transcoder_disabled_by_default(self) -> None:
+        """YamlTranscoder is disabled by default (net-negative compression)."""
+        cfg = CompressionConfig()
+        yaml_adapter = next(a for a in cfg.adapters if a.name == "yaml_transcoder")
+        assert yaml_adapter.enabled is False
+
     def test_default_adapter_ordering(self) -> None:
         """Default ordering: cleanup first, then lossy, then transforms, then safety nets."""
         cfg = CompressionConfig()

@@ -53,6 +53,10 @@ class YamlTranscoder:
             sort_keys=True,
         )
 
+        # Pre-regret size guard: skip if YAML is not smaller than original JSON
+        if len(yaml_content) >= len(envelope.content):
+            return envelope
+
         new_metadata = dict(envelope.metadata)
         new_metadata["transformed_by"] = "yaml_transcoder"
 

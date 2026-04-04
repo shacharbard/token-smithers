@@ -66,7 +66,7 @@ def _default_adapters() -> list[AdapterConfig]:
         AdapterConfig(name="rle_encoder"),
         # Format transforms (mutually exclusive via transformed_by)
         AdapterConfig(name="toon_compressor"),
-        AdapterConfig(name="yaml_transcoder"),
+        AdapterConfig(name="yaml_transcoder", enabled=False),
         # File redirect
         AdapterConfig(name="file_redirect", enabled=False),
         # Safety net (always last)

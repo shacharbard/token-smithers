@@ -187,3 +187,14 @@ class TestYamlTranscoderSpecific:
         # Keys should appear in sorted order
         assert lines[0] == "alpha: 2"
         assert lines[1] == "zebra: 1"
+
+    def test_compress_skips_when_yaml_is_larger(self, strategy, make_envelope):
+        """compress() returns envelope unchanged when YAML >= original JSON."""
+        # Small scalar array: JSON "[1, 2]" (6 chars) -> YAML "- 1\n- 2\n" (8 chars)
+        data = json.dumps([1, 2])
+        envelope = make_envelope(content=data, content_type=ContentType.JSON)
+        result = strategy.compress(envelope)
+
+        # YAML is larger, so envelope should be returned unchanged
+        assert result.content == data
+        assert "transformed_by" not in result.metadata
