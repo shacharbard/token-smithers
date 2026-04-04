@@ -298,7 +298,7 @@ class TestCreateFromConfig:
                     {"name": "whitespace_normalizer"},
                     {"name": "smart_truncation"},
                 ],
-                "size_gate_threshold": 2000,
+                "size_gate_threshold": 500,
             }
         )
         proxy = ProxyServer.create_from_config(config)
