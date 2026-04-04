@@ -598,8 +598,16 @@ class ProxyServer:
             "KeyAliasingStrategy",
         ),
         "ast_skeleton": (
-            "token_sieve.adapters.compression.ast_skeleton",
-            "ASTSkeletonExtractor",
+            "token_sieve.adapters.compression.tree_sitter_ast",
+            "TreeSitterASTExtractor",
+        ),
+        "tree_sitter_ast": (
+            "token_sieve.adapters.compression.tree_sitter_ast",
+            "TreeSitterASTExtractor",
+        ),
+        "json_code_unwrapper": (
+            "token_sieve.adapters.compression.json_code_unwrapper",
+            "JsonCodeUnwrapper",
         ),
         "graph_encoder": (
             "token_sieve.adapters.compression.graph_encoder",
@@ -645,6 +653,16 @@ class ProxyServer:
                         file=__import__("sys").stderr,
                     )
                     continue
+
+                if adapter_cfg.name == "ast_skeleton":
+                    import warnings
+
+                    warnings.warn(
+                        "Adapter name 'ast_skeleton' is deprecated; "
+                        "use 'tree_sitter_ast' instead.",
+                        DeprecationWarning,
+                        stacklevel=2,
+                    )
 
                 module_path, class_name = registry_entry
                 try:

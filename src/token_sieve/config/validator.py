@@ -25,6 +25,8 @@ CONTENT_SPECIFIC = frozenset({
     "log_level_filter",
     "error_stack_compressor",
     "code_comment_stripper",
+    "json_code_unwrapper",
+    "tree_sitter_ast",
 })
 
 FORMAT = frozenset({

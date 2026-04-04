@@ -59,6 +59,8 @@ def _default_adapters() -> list[AdapterConfig]:
         AdapterConfig(name="log_level_filter", enabled=False),
         AdapterConfig(name="error_stack_compressor", enabled=False),
         AdapterConfig(name="code_comment_stripper", enabled=False),
+        AdapterConfig(name="json_code_unwrapper", enabled=False),
+        AdapterConfig(name="tree_sitter_ast", enabled=False),
         # Sentence scorer + RLE
         AdapterConfig(name="sentence_scorer", enabled=False),
         AdapterConfig(name="rle_encoder"),
