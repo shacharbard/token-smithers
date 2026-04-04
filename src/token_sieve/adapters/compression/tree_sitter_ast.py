@@ -25,6 +25,9 @@ from typing import Any
 from token_sieve.adapters.compression.summary_marker import format_summary_marker
 from token_sieve.domain.model import ContentEnvelope
 
+# Type alias for per-language configuration dictionaries
+LanguageConfig = dict[str, Any]
+
 # ---------------------------------------------------------------------------
 # Optional import guard (graceful degradation if tree-sitter missing)
 # ---------------------------------------------------------------------------
@@ -48,9 +51,8 @@ except ImportError:
 # Per-language config dicts (Decision 5)
 # ---------------------------------------------------------------------------
 
-_LANGUAGE_CONFIGS: dict[str, dict[str, Any]] = {
+_LANGUAGE_CONFIGS: dict[str, LanguageConfig] = {
     "python": {
-        "grammar_module": "tree_sitter_python",
         "language_fn": lambda: tree_sitter_python.language(),
         "function_node_types": ["function_definition"],
         "class_node_types": ["class_definition"],
@@ -65,7 +67,6 @@ _LANGUAGE_CONFIGS: dict[str, dict[str, Any]] = {
         ],
     },
     "typescript": {
-        "grammar_module": "tree_sitter_typescript",
         "language_fn": lambda: tree_sitter_typescript.language_typescript(),
         "function_node_types": ["function_declaration", "method_definition"],
         "class_node_types": [
@@ -83,7 +84,6 @@ _LANGUAGE_CONFIGS: dict[str, dict[str, Any]] = {
         ],
     },
     "javascript": {
-        "grammar_module": "tree_sitter_javascript",
         "language_fn": lambda: tree_sitter_javascript.language(),
         "function_node_types": ["function_declaration", "method_definition"],
         "class_node_types": ["class_declaration"],
@@ -98,7 +98,6 @@ _LANGUAGE_CONFIGS: dict[str, dict[str, Any]] = {
         ],
     },
     "go": {
-        "grammar_module": "tree_sitter_go",
         "language_fn": lambda: tree_sitter_go.language(),
         "function_node_types": ["function_declaration", "method_declaration"],
         "class_node_types": ["type_declaration"],
@@ -113,10 +112,9 @@ _LANGUAGE_CONFIGS: dict[str, dict[str, Any]] = {
         ],
     },
     "rust": {
-        "grammar_module": "tree_sitter_rust",
         "language_fn": lambda: tree_sitter_rust.language(),
         "function_node_types": ["function_item"],
-        "class_node_types": ["struct_item", "impl_item", "trait_item", "enum_item"],
+        "class_node_types": ["struct_item", "trait_item", "enum_item"],
         "signature_terminator": "{",
         "doc_comment_types": ["line_comment"],
         "decorator_node_types": ["attribute_item"],
@@ -128,7 +126,6 @@ _LANGUAGE_CONFIGS: dict[str, dict[str, Any]] = {
         ],
     },
     "java": {
-        "grammar_module": "tree_sitter_java",
         "language_fn": lambda: tree_sitter_java.language(),
         "function_node_types": ["method_declaration", "constructor_declaration"],
         "class_node_types": ["class_declaration", "interface_declaration", "enum_declaration"],
@@ -274,7 +271,7 @@ def _compute_error_rate(root_node: Any) -> float:
 def _extract_skeleton(
     root_node: Any,
     source_bytes: bytes,
-    config: dict[str, Any],
+    config: LanguageConfig,
     timeout_deadline: float,
 ) -> list[str]:
     """Walk tree and extract signatures, doc comments, decorators.
