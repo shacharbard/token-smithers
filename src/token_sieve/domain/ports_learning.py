@@ -112,3 +112,7 @@ class LearningStore(Protocol):
     async def get_savings_trend(self, sessions: int = 10) -> list[dict]:
         """Get session-level rollups for the last N sessions."""
         ...
+
+    async def get_suggestion_candidates(self, session_id: str) -> list[dict]:
+        """Get CLAUDE.md suggestion candidates based on session patterns."""
+        ...

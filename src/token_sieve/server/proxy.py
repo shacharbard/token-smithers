@@ -940,6 +940,10 @@ class _DeferredLearningStore:
         store = await self._ensure_connected()
         return await store.get_savings_trend(sessions)
 
+    async def get_suggestion_candidates(self, session_id: str) -> list[dict]:
+        store = await self._ensure_connected()
+        return await store.get_suggestion_candidates(session_id)
+
 
 class _DeferredSemanticCache:
     """Deferred semantic cache — wraps config for lazy async init."""

@@ -610,3 +610,62 @@ class SQLiteLearningStore:
             }
             for r in rows
         ]
+
+    async def get_suggestion_candidates(
+        self,
+        session_id: str,
+        tool_repeat_threshold: int = 5,
+        content_repeat_threshold: int = 4,
+    ) -> list[dict]:
+        """Get CLAUDE.md suggestion candidates based on session patterns.
+
+        Returns suggestions for:
+        - Tools called tool_repeat_threshold+ times (repeated_tool)
+        - Tool+strategy combos with content_repeat_threshold+ events (repeated_content)
+        """
+        suggestions: list[dict] = []
+
+        # Repeated tool calls
+        async with self._db.execute(
+            "SELECT tool_name, COUNT(*) as cnt "
+            "FROM compression_events WHERE session_id = ? "
+            "GROUP BY tool_name HAVING cnt >= ? "
+            "ORDER BY cnt DESC",
+            (session_id, tool_repeat_threshold),
+        ) as cursor:
+            for row in await cursor.fetchall():
+                suggestions.append(
+                    {
+                        "type": "repeated_tool",
+                        "target": row[0],
+                        "count": row[1],
+                        "suggestion": (
+                            f"Consider adding a summary to CLAUDE.md for {row[0]} "
+                            f"({row[1]} calls this session)"
+                        ),
+                    }
+                )
+
+        # Repeated content patterns (same tool+strategy combo)
+        async with self._db.execute(
+            "SELECT tool_name, strategy_name, COUNT(*) as cnt "
+            "FROM compression_events WHERE session_id = ? "
+            "GROUP BY tool_name, strategy_name HAVING cnt >= ? "
+            "ORDER BY cnt DESC",
+            (session_id, content_repeat_threshold),
+        ) as cursor:
+            for row in await cursor.fetchall():
+                pattern = f"{row[0]}:{row[1]}"
+                suggestions.append(
+                    {
+                        "type": "repeated_content",
+                        "target": pattern,
+                        "count": row[2],
+                        "suggestion": (
+                            f"Consider documenting {pattern} in CLAUDE.md "
+                            f"({row[2]} compressions this session)"
+                        ),
+                    }
+                )
+
+        return suggestions

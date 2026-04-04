@@ -286,6 +286,11 @@ class TestLearningStoreStructuralSubtyping:
             ) -> list[dict]:
                 return []
 
+            async def get_suggestion_candidates(
+                self, session_id: str
+            ) -> list[dict]:
+                return []
+
         assert isinstance(MockStore(), LearningStore)
 
     def test_missing_method_not_instance(self) -> None:
