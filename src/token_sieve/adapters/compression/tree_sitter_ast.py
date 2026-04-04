@@ -375,12 +375,14 @@ def _extract_skeleton(
 
         sig = _extract_signature(node)
 
-        # For Python, extract inline docstring
+        # For Python, extract inline docstring and use indented body placeholder
         if is_python:
             docstring = _extract_python_docstring(node)
             if docstring:
                 sig += "\n    " + docstring
-        sig += "\n    ..."
+            sig += "\n    ..."
+        else:
+            sig += " { ... }"
         parts.append(sig)
 
     def _emit_class(node: Any, decorators: list[str] | None = None) -> None:
