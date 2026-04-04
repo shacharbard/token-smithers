@@ -19,6 +19,11 @@ import pytest
 
 from token_sieve.adapters.cache.diff_state_store import DiffStateStore
 from token_sieve.adapters.compression.ast_skeleton import ASTSkeletonExtractor
+from token_sieve.adapters.compression.json_code_unwrapper import JsonCodeUnwrapper
+from token_sieve.adapters.compression.tree_sitter_ast import (
+    TreeSitterASTExtractor,
+    _TREE_SITTER_AVAILABLE,
+)
 from token_sieve.adapters.compression.code_comment_stripper import (
     CodeCommentStripper,
 )
@@ -158,6 +163,65 @@ _GRAPH_CONTENT = json.dumps(
     }
 )
 
+# JSON-wrapped code for JsonCodeUnwrapper
+_JSON_WRAPPED_CODE = json.dumps(
+    {
+        "content": textwrap.dedent("""\
+            def greet(name: str) -> str:
+                \"\"\"Greet by name.\"\"\"
+                return f"Hello, {name}!"
+
+            class Greeter:
+                def greet(self) -> str:
+                    return greet("world")
+        """),
+        "language": "python",
+    }
+)
+
+# Multi-language code snippets for TreeSitterASTExtractor determinism
+_TYPESCRIPT_CODE = textwrap.dedent("""\
+    interface User {
+        name: string;
+        age: number;
+    }
+
+    function greet(user: User): string {
+        return `Hello, ${user.name}!`;
+    }
+
+    class UserService {
+        private users: User[] = [];
+
+        add(user: User): void {
+            this.users.push(user);
+        }
+
+        findByName(name: string): User | undefined {
+            return this.users.find(u => u.name === name);
+        }
+    }
+""")
+
+_GO_CODE = textwrap.dedent("""\
+    package main
+
+    import "fmt"
+
+    type User struct {
+        Name string
+        Age  int
+    }
+
+    func (u *User) Greet() string {
+        return fmt.Sprintf("Hello, %s!", u.Name)
+    }
+
+    func NewUser(name string, age int) *User {
+        return &User{Name: name, Age: age}
+    }
+""")
+
 # Long prose for SentenceScorer (needs 100+ words, 5+ sentences)
 _PROSE_CONTENT = (
     "The quick brown fox jumps over the lazy dog. "
@@ -249,6 +313,14 @@ def _make_ast_skeleton():
 
 def _make_graph_encoder():
     return GraphAdjacencyEncoder()
+
+
+def _make_json_code_unwrapper():
+    return JsonCodeUnwrapper()
+
+
+def _make_tree_sitter_ast():
+    return TreeSitterASTExtractor()
 
 
 def _make_sentence_scorer():
@@ -362,6 +434,19 @@ _DETERMINISTIC_ADAPTERS = [
         _make_graph_encoder,
         ContentEnvelope(content=_GRAPH_CONTENT, content_type=ContentType.JSON),
         id="GraphAdjacencyEncoder",
+    ),
+    pytest.param(
+        _make_json_code_unwrapper,
+        ContentEnvelope(content=_JSON_WRAPPED_CODE, content_type=ContentType.JSON),
+        id="JsonCodeUnwrapper",
+    ),
+    pytest.param(
+        _make_tree_sitter_ast,
+        ContentEnvelope(content=_PYTHON_CODE, content_type=ContentType.CODE),
+        id="TreeSitterASTExtractor",
+        marks=pytest.mark.skipif(
+            not _TREE_SITTER_AVAILABLE, reason="tree-sitter not installed"
+        ),
     ),
 ]
 
@@ -542,4 +627,51 @@ class TestSentenceScorerDeterminism:
                 f"LSA non-deterministic on call {i+1}:\n"
                 f"  call 1: {results[0][:100]}...\n"
                 f"  call {i+1}: {results[i][:100]}..."
+            )
+
+
+@pytest.mark.skipif(not _TREE_SITTER_AVAILABLE, reason="tree-sitter not installed")
+class TestTreeSitterMultiLanguageDeterminism:
+    """TreeSitterASTExtractor must be deterministic across 3+ languages."""
+
+    def test_python_determinism_5_calls(self):
+        """Python skeleton extraction is deterministic across 5 calls."""
+        adapter = TreeSitterASTExtractor()
+        envelope = ContentEnvelope(
+            content=_PYTHON_CODE, content_type=ContentType.CODE
+        )
+        assert adapter.can_handle(envelope), "Should handle Python code"
+
+        results = [adapter.compress(envelope).content for _ in range(5)]
+        for i in range(1, 5):
+            assert results[0] == results[i], (
+                f"Python non-deterministic on call {i+1}"
+            )
+
+    def test_typescript_determinism_5_calls(self):
+        """TypeScript skeleton extraction is deterministic across 5 calls."""
+        adapter = TreeSitterASTExtractor()
+        envelope = ContentEnvelope(
+            content=_TYPESCRIPT_CODE, content_type=ContentType.CODE
+        )
+        assert adapter.can_handle(envelope), "Should handle TypeScript code"
+
+        results = [adapter.compress(envelope).content for _ in range(5)]
+        for i in range(1, 5):
+            assert results[0] == results[i], (
+                f"TypeScript non-deterministic on call {i+1}"
+            )
+
+    def test_go_determinism_5_calls(self):
+        """Go skeleton extraction is deterministic across 5 calls."""
+        adapter = TreeSitterASTExtractor()
+        envelope = ContentEnvelope(
+            content=_GO_CODE, content_type=ContentType.CODE
+        )
+        assert adapter.can_handle(envelope), "Should handle Go code"
+
+        results = [adapter.compress(envelope).content for _ in range(5)]
+        for i in range(1, 5):
+            assert results[0] == results[i], (
+                f"Go non-deterministic on call {i+1}"
             )
