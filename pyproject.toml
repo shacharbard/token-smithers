@@ -21,6 +21,12 @@ prose = [
 learning = [
     "aiosqlite>=0.20.0",
 ]
+embeddings = [
+    "model2vec>=0.3",
+]
+ranking = [
+    "rank-bm25>=0.2",
+]
 ast = [
     "tree-sitter>=0.23.0",
     "tree-sitter-python>=0.23.0",
@@ -45,7 +51,7 @@ dev = [
     "tree-sitter-java>=0.23.0",
 ]
 all = [
-    "token-smithers[prose,learning,ast]",
+    "token-smithers[prose,learning,ast,embeddings,ranking]",
 ]
 
 [project.scripts]
