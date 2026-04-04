@@ -151,6 +151,7 @@ class ProxyServer:
 
         if uri == "token-sieve://stats" and self._metrics_collector is not None:
             data = {
+                "session_id": self._session_id,
                 "session_summary": self._metrics_collector.session_summary(),
                 "strategy_breakdown": self._metrics_collector.strategy_breakdown(),
             }

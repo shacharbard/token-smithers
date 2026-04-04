@@ -144,7 +144,7 @@ class TestStatsResource:
 
         proxy = ProxyServer(
             backend_connector=connector,
-            tool_filter=ToolFilter(),
+            tool_filter=ToolFilter(mode="passthrough"),
             pipeline=CompressionPipeline(counter=CharEstimateCounter()),
             metrics_sink=StderrMetricsSink(),
             metrics_collector=metrics_collector,

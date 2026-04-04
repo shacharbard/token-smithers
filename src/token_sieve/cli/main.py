@@ -166,7 +166,7 @@ async def _run_proxy(config_path: str | None = None) -> int:
     return 0
 
 
-def _run_stats() -> int:
+def _run_stats(full: bool = False) -> int:
     """Print metrics dashboard from metrics.json file."""
     import json
     import os
@@ -246,6 +246,18 @@ def _run_stats() -> int:
                 f"{stats['total_compressed_tokens']:>10}"
             )
         print()
+
+    # Full report with learning DB telemetry
+    if full:
+        from token_sieve.cli.report_formatter import (
+            format_full_report,
+            query_learning_telemetry,
+        )
+
+        telemetry = query_learning_telemetry()
+        report = format_full_report(telemetry)
+        if report.strip():
+            print(report)
 
     return 0
 
@@ -344,7 +356,8 @@ def main(argv: list[str] | None = None) -> int:
     # Check for stats subcommand before argparse (avoids positional conflict)
     effective_argv = argv if argv is not None else sys.argv[1:]
     if effective_argv and effective_argv[0] == "stats":
-        return _run_stats()
+        full = "--full" in effective_argv
+        return _run_stats(full=full)
 
     if effective_argv and effective_argv[0] == "status-line":
         return _run_status_line()
