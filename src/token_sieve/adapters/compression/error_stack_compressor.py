@@ -8,6 +8,7 @@ Off by default (lossy). Requires explicit ``enabled=True`` opt-in.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 
 from token_sieve.adapters.compression.summary_marker import format_summary_marker
@@ -89,11 +90,7 @@ class ErrorStackCompressor:
         )
         final_content = compressed.strip() + "\n" + marker
 
-        return ContentEnvelope(
-            content=final_content,
-            content_type=envelope.content_type,
-            metadata=dict(envelope.metadata),
-        )
+        return dataclasses.replace(envelope, content=final_content)
 
     def _compress_python_tracebacks(self, content: str) -> str:
         """Compress Python tracebacks: strip library frames, deduplicate."""

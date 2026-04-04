@@ -9,6 +9,7 @@ Off by default (lossy). Requires explicit ``enabled=True`` opt-in.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 
 from token_sieve.adapters.compression.summary_marker import format_summary_marker
@@ -90,11 +91,7 @@ class CodeCommentStripper:
         )
         compressed_content = "\n".join(final_lines).rstrip() + "\n" + marker
 
-        return ContentEnvelope(
-            content=compressed_content,
-            content_type=envelope.content_type,
-            metadata=dict(envelope.metadata),
-        )
+        return dataclasses.replace(envelope, content=compressed_content)
 
     @staticmethod
     def _strip_docstrings(content: str) -> str:
