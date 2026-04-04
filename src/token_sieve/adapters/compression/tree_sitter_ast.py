@@ -28,6 +28,10 @@ from token_sieve.domain.model import ContentEnvelope
 # Type alias for per-language configuration dictionaries
 LanguageConfig = dict[str, Any]
 
+# Maximum input size in bytes before we skip parsing (500KB).
+# Tree-sitter is O(n) and runs synchronously — large inputs cause latency spikes.
+_MAX_INPUT_SIZE = 500_000
+
 # ---------------------------------------------------------------------------
 # Optional import guard (graceful degradation if tree-sitter missing)
 # ---------------------------------------------------------------------------
@@ -147,24 +151,26 @@ _LANGUAGE_CONFIGS: dict[str, LanguageConfig] = {
 # ---------------------------------------------------------------------------
 
 
-def _detect_language(content: str, metadata: Any) -> str | None:
+def _detect_language(content: str, metadata: Any) -> tuple[str | None, Any]:
     """Detect programming language using layered approach.
 
     Layer 1: metadata file extension hints.
     Layer 2: content heuristics (shebang, unique keywords).
     Layer 3: tree-sitter error-rate probing on top 2 candidates.
 
-    Returns language key or None.
+    Returns (language_key, parse_tree) tuple. The parse tree is cached
+    from Layer 3 probing to avoid double-parsing in compress().
+    Returns (None, None) if no language detected.
     """
     if not _TREE_SITTER_AVAILABLE:
-        return None
+        return None, None
 
     # Layer 1: metadata hints
     ext = _extension_from_metadata(metadata)
     if ext:
         lang = _extension_to_language(ext)
         if lang:
-            return lang
+            return lang, None  # No tree yet — caller will parse
 
     # Layer 2: content heuristics -- score each language
     scores: dict[str, int] = {}
@@ -179,7 +185,7 @@ def _detect_language(content: str, metadata: Any) -> str | None:
             scores[lang_key] = score
 
     if not scores:
-        return None
+        return None, None
 
     # Sort by score descending, take top 2 for Layer 3
     candidates = sorted(scores.keys(), key=lambda k: scores[k], reverse=True)[:2]
@@ -187,6 +193,7 @@ def _detect_language(content: str, metadata: Any) -> str | None:
     # Layer 3: tree-sitter error-rate probing
     best_lang = None
     best_error_rate = 1.0
+    best_tree = None
     content_bytes = content.encode("utf-8", errors="replace")
 
     for lang_key in candidates:
@@ -198,11 +205,12 @@ def _detect_language(content: str, metadata: Any) -> str | None:
         if error_rate < best_error_rate:
             best_error_rate = error_rate
             best_lang = lang_key
+            best_tree = tree
 
     # Only accept if error rate is reasonable (< 0.5)
     if best_lang and best_error_rate < 0.5:
-        return best_lang
-    return None
+        return best_lang, best_tree
+    return None, None
 
 
 def _extension_from_metadata(metadata: Any) -> str | None:
@@ -244,18 +252,28 @@ def _extension_to_language(ext: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _compute_error_rate(root_node: Any) -> float:
-    """Compute fraction of ERROR/MISSING nodes in the parse tree."""
+def _compute_error_rate(root_node: Any, threshold: float = 0.5) -> float:
+    """Compute fraction of ERROR/MISSING nodes in the parse tree.
+
+    Early-exits once accumulated error fraction exceeds threshold
+    to avoid walking the entire tree for clearly malformed input.
+    """
     total = 0
     errors = 0
 
-    def _walk(node: Any) -> None:
+    def _walk(node: Any) -> bool:
+        """Walk node tree. Returns False to signal early exit."""
         nonlocal total, errors
         total += 1
         if node.type == "ERROR" or node.is_missing:
             errors += 1
+            # Early exit: if we've seen enough nodes and error rate exceeds threshold
+            if total >= 20 and errors / total > threshold:
+                return False
         for child in node.children:
-            _walk(child)
+            if not _walk(child):
+                return False
+        return True
 
     _walk(root_node)
     if total == 0:
@@ -313,18 +331,27 @@ def _extract_skeleton(
             return full_text.split("\n")[0]
 
     def _get_preceding_doc_comment(node: Any) -> str | None:
-        """Get doc comment immediately before this node."""
+        """Get doc comment(s) immediately before this node.
+
+        Walks backwards through prev_named_sibling while consecutive
+        siblings are comment nodes, collecting all of them. This handles
+        Go-style multi-line ``//`` comments where each line is a separate
+        named sibling.
+        """
+        comments: list[str] = []
         prev = node.prev_named_sibling
-        if prev is None:
-            return None
-        if prev.type in doc_types:
-            text = _node_text(prev)
+        while prev is not None and prev.type in doc_types:
             # For Python, expression_statement preceding a class/def is not a doc
             # comment (docstrings live inside the body, not before it)
             if prev.type == "expression_statement":
-                return None
-            return text
-        return None
+                break
+            comments.append(_node_text(prev))
+            prev = prev.prev_named_sibling
+        if not comments:
+            return None
+        # Reverse to restore original order (we walked backwards)
+        comments.reverse()
+        return "\n".join(comments)
 
     def _get_preceding_decorator(node: Any) -> str | None:
         """Get decorator/annotation immediately before this node."""
@@ -503,7 +530,9 @@ class TreeSitterASTExtractor:
         """Return True if tree-sitter is available and language is detected."""
         if not _TREE_SITTER_AVAILABLE:
             return False
-        lang = _detect_language(envelope.content, envelope.metadata)
+        if len(envelope.content) > _MAX_INPUT_SIZE:
+            return False
+        lang, _tree = _detect_language(envelope.content, envelope.metadata)
         return lang is not None
 
     def compress(self, envelope: ContentEnvelope) -> ContentEnvelope:
@@ -511,6 +540,7 @@ class TreeSitterASTExtractor:
 
         Returns the original envelope unchanged if:
         - Language cannot be detected
+        - Input exceeds size limit
         - Error rate exceeds threshold
         - Walk exceeds timeout
         - Zero structures extracted
@@ -518,17 +548,23 @@ class TreeSitterASTExtractor:
         if not _TREE_SITTER_AVAILABLE:
             return envelope
 
-        lang = _detect_language(envelope.content, envelope.metadata)
+        if len(envelope.content) > _MAX_INPUT_SIZE:
+            return envelope
+
+        lang, cached_tree = _detect_language(envelope.content, envelope.metadata)
         if lang is None:
             return envelope
 
         config = _LANGUAGE_CONFIGS[lang]
         content_bytes = envelope.content.encode("utf-8", errors="replace")
 
-        # Parse
-        language = tree_sitter.Language(config["language_fn"]())
-        parser = tree_sitter.Parser(language)
-        tree = parser.parse(content_bytes)
+        # Reuse cached tree from _detect_language if available, else parse
+        if cached_tree is not None:
+            tree = cached_tree
+        else:
+            language = tree_sitter.Language(config["language_fn"]())
+            parser = tree_sitter.Parser(language)
+            tree = parser.parse(content_bytes)
 
         # Error tolerance: check error rate
         error_rate = _compute_error_rate(tree.root_node)
