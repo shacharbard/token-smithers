@@ -10,6 +10,7 @@ import dataclasses
 import json
 from typing import Any
 
+from token_sieve.adapters.compression._json_utils import try_parse_json
 from token_sieve.domain.model import ContentEnvelope, ContentType
 
 
@@ -29,9 +30,8 @@ class NullFieldElider:
 
     def compress(self, envelope: ContentEnvelope) -> ContentEnvelope:
         """Remove null/empty fields from JSON content."""
-        try:
-            parsed = json.loads(envelope.content)
-        except (json.JSONDecodeError, ValueError):
+        parsed = try_parse_json(envelope.content)
+        if parsed is None:
             return envelope
 
         cleaned = self._elide(parsed)

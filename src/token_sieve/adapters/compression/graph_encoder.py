@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import re
 
+from token_sieve.adapters.compression._json_utils import (
+    JSON_START_RE as _JSON_START_RE,
+    try_parse_json,
+)
 from token_sieve.domain.model import ContentEnvelope
-
-
-_JSON_START_RE = re.compile(r"^\s*[\[{]")
 
 # Keys that signal graph-like content
 _GRAPH_KEYS = {"dependencies", "imports", "nodes", "edges", "children", "requires"}
@@ -34,9 +34,8 @@ class GraphAdjacencyEncoder:
         if not _JSON_START_RE.match(content):
             return False
 
-        try:
-            parsed = json.loads(content)
-        except (json.JSONDecodeError, ValueError):
+        parsed = try_parse_json(content)
+        if parsed is None:
             return False
 
         if not isinstance(parsed, dict):
@@ -61,9 +60,8 @@ class GraphAdjacencyEncoder:
     def compress(self, envelope: ContentEnvelope) -> ContentEnvelope:
         """Convert graph JSON to adjacency notation."""
         content = envelope.content.strip()
-        try:
-            parsed = json.loads(content)
-        except (json.JSONDecodeError, ValueError):
+        parsed = try_parse_json(content)
+        if parsed is None:
             return envelope
 
         if not isinstance(parsed, dict):

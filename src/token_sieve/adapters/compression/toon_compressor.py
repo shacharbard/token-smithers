@@ -14,6 +14,7 @@ import dataclasses
 import json
 from typing import Any
 
+from token_sieve.adapters.compression._json_utils import try_parse_json
 from token_sieve.domain.model import ContentEnvelope
 
 
@@ -22,6 +23,21 @@ class ToonCompressor:
 
     Satisfies CompressionStrategy protocol structurally.
     """
+
+    @staticmethod
+    def is_uniform_array(data: Any) -> bool:
+        """Check if data is a uniform array eligible for TOON encoding.
+
+        Uniform = list of 2+ dicts with identical key sets.
+        """
+        if not isinstance(data, list) or len(data) < 2:
+            return False
+        if not all(isinstance(item, dict) for item in data):
+            return False
+        first_keys = set(data[0].keys())
+        if not first_keys:
+            return False
+        return all(set(item.keys()) == first_keys for item in data[1:])
 
     def can_handle(self, envelope: ContentEnvelope) -> bool:
         """Accept uniform JSON arrays with 2+ items and no prior transformation."""
@@ -60,24 +76,12 @@ class ToonCompressor:
         Returns (keys, rows) if content is a JSON array of 2+ dicts
         with identical key sets. Returns None otherwise.
         """
-        try:
-            data = json.loads(content)
-        except (json.JSONDecodeError, TypeError):
+        data = try_parse_json(content)
+        if data is None:
             return None
 
-        if not isinstance(data, list) or len(data) < 2:
+        if not self.is_uniform_array(data):
             return None
-
-        if not all(isinstance(item, dict) for item in data):
-            return None
-
-        first_keys = set(data[0].keys())
-        if not first_keys:
-            return None
-
-        for item in data[1:]:
-            if set(item.keys()) != first_keys:
-                return None
 
         # Use stable key order from first dict
         keys = list(data[0].keys())
