@@ -13,6 +13,11 @@ read_stdin() {
 # Extract a JSON string field using python3 one-liner.
 # Usage: value=$(json_field "field_name")
 # Returns empty string if field missing or input is not valid JSON.
+#
+# M11 note: This extracts TOP-LEVEL fields from the Claude Code hook JSON.
+# Tool arguments live under the "tool_input" nested object, which is accessed
+# directly in hooks that need them (e.g., edit-mcp-gate.sh extracts
+# tool_input.file_path). This is intentional — not all hooks need tool_input.
 json_field() {
   local field="$1"
   _HOOK_JSON="$HOOK_INPUT" _HOOK_FIELD="$field" python3 -c "

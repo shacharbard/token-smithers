@@ -9,28 +9,27 @@
 
 set -euo pipefail
 
+# M9: Hooks intentionally fail-open (exit 0) when python3 is absent or JSON
+# parsing fails. This is a deliberate availability-over-security design:
+# blocking tool use because of a missing interpreter would break the agent's
+# workflow entirely. The hooks are advisory guardrails, not security gates.
 INPUT=$(cat 2>/dev/null || echo "{}")
 [ -z "$INPUT" ] && exit 0
 
-FILE_PATH=$(echo "$INPUT" | python3 -c "
+# M10 fix: consolidate 3 python3 invocations into 1 for all JSON field extraction
+read -r FILE_PATH TOOL_NAME CWD_FIELD <<< "$(echo "$INPUT" | python3 -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
 except (json.JSONDecodeError, ValueError):
+    print('  ')
     sys.exit(0)
 ti = d.get('tool_input', {})
-print(ti.get('file_path', ''))
-" 2>/dev/null || echo "")
-
-TOOL_NAME=$(echo "$INPUT" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-except (json.JSONDecodeError, ValueError):
-    print('')
-    sys.exit(0)
-print(d.get('tool_name', ''))
-" 2>/dev/null || echo "")
+file_path = ti.get('file_path', '')
+tool_name = d.get('tool_name', '')
+cwd = d.get('cwd', '')
+print(f'{file_path} {tool_name} {cwd}')
+" 2>/dev/null || echo "  ")"
 
 # No file path — allow
 [ -z "$FILE_PATH" ] && exit 0
@@ -38,7 +37,7 @@ print(d.get('tool_name', ''))
 # Check if jCodeMunch is available
 HAS_JCM="${TOKEN_SIEVE_HAS_JCODEMUNCH:-}"
 if [ -z "$HAS_JCM" ]; then
-  CWD=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('cwd',''))" 2>/dev/null)
+  CWD="$CWD_FIELD"
   if [ -z "$CWD" ] && [[ "$FILE_PATH" = /* ]]; then
     _DIR=$(dirname "$FILE_PATH")
     while [ "$_DIR" != "/" ]; do
