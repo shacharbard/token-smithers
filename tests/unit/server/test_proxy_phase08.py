@@ -532,3 +532,83 @@ class TestRelatedToolsSurfacing:
         result = await proxy.handle_call_tool("visible_tool", {})
         text = result.content[0].text
         assert "[Token Smithers]" not in text
+
+
+# ---------------------------------------------------------------------------
+# Task 4: Stats resource extension + _DeferredLearningStore update
+# ---------------------------------------------------------------------------
+
+
+class TestStatsResourceVisibility:
+    """Stats resource includes visibility data when controller is active."""
+
+    @pytest.mark.anyio
+    async def test_stats_resource_includes_visibility(self) -> None:
+        """token-sieve://stats includes tool_visibility key."""
+        import json
+
+        from token_sieve.adapters.visibility.visibility_controller import (
+            VisibilityController,
+        )
+        from token_sieve.domain.metrics import InMemoryMetricsCollector
+
+        tools = [_make_tool(f"tool_{i}") for i in range(10)]
+        usage_stats = [_make_usage_record(f"tool_{i}", 5) for i in range(5)]
+
+        vc = VisibilityController(min_visible_floor=5, cold_start_sessions=3)
+        store = _make_fake_learning_store(usage_stats=usage_stats, session_count=5)
+        collector = InMemoryMetricsCollector()
+
+        proxy = _make_proxy(
+            tools=tools,
+            visibility_controller=vc,
+            learning_store=store,
+            metrics_collector=collector,
+        )
+
+        # Populate hidden tools
+        await proxy.handle_list_tools()
+
+        result = await proxy.handle_read_resource("token-sieve://stats")
+        data = json.loads(result)
+        assert "tool_visibility" in data
+        assert "total_hidden" in data["tool_visibility"]
+
+    @pytest.mark.anyio
+    async def test_stats_resource_registered_with_visibility_only(self) -> None:
+        """Stats resource available when visibility active but no metrics_collector."""
+        from token_sieve.adapters.visibility.visibility_controller import (
+            VisibilityController,
+        )
+
+        vc = VisibilityController(min_visible_floor=5, cold_start_sessions=3)
+        store = _make_fake_learning_store(session_count=5)
+
+        proxy = _make_proxy(
+            tools=[_make_tool("tool_a")],
+            visibility_controller=vc,
+            learning_store=store,
+        )
+
+        resources = await proxy.handle_list_resources()
+        uris = [r.uri for r in resources]
+        assert "token-sieve://stats" in uris
+
+
+class TestDeferredLearningStoreSessionMethods:
+    """_DeferredLearningStore mirrors session tracking methods."""
+
+    def test_deferred_store_has_session_methods(self) -> None:
+        """Verify _DeferredLearningStore exposes session tracking methods."""
+        from token_sieve.server.proxy import _DeferredLearningStore
+
+        store = _DeferredLearningStore(db_path=":memory:")
+
+        assert hasattr(store, "record_session")
+        assert hasattr(store, "get_session_count")
+        assert hasattr(store, "record_tool_session_call")
+        assert hasattr(store, "get_tool_usage_in_recent_sessions")
+        assert callable(store.record_session)
+        assert callable(store.get_session_count)
+        assert callable(store.record_tool_session_call)
+        assert callable(store.get_tool_usage_in_recent_sessions)
