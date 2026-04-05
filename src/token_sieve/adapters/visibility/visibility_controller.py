@@ -95,7 +95,7 @@ class VisibilityController:
             # Session-unhidden tools always go to called
             if name in self._session_unhidden:
                 called.append(tool)
-            elif usage_by_name.get(name, 0) > 0:
+            elif usage_by_name.get(name, 0) >= self._frequency_threshold:
                 called.append(tool)
             else:
                 uncalled.append(tool)

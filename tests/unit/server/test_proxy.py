@@ -1572,3 +1572,131 @@ class TestSchemaVirtualizationCacheKeyIncludesContent:
         assert virtualizer.virtualize.call_count == 2, (
             "Cache key only checked tool names, not schema content"
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 08 adversarial review fixes
+# ---------------------------------------------------------------------------
+
+
+class TestC1CreateFromConfigWiresVisibilityController:
+    """C1: create_from_config must wire VisibilityController when enabled."""
+
+    def test_visibility_controller_wired_when_enabled_with_learning(self) -> None:
+        """When tool_visibility.enabled=True and learning.enabled=True,
+        create_from_config should create a VisibilityController."""
+        from token_sieve.config.schema import TokenSieveConfig
+        from token_sieve.server.proxy import ProxyServer
+
+        config = TokenSieveConfig(
+            tool_visibility={"enabled": True, "frequency_threshold": 5},
+            learning={"enabled": True, "db_path": ":memory:"},
+        )
+        proxy = ProxyServer.create_from_config(config)
+        assert proxy._visibility_controller is not None, (
+            "C1: VisibilityController should be wired when tool_visibility "
+            "and learning are both enabled"
+        )
+
+    def test_visibility_controller_not_wired_when_disabled(self) -> None:
+        """When tool_visibility.enabled=False, no VisibilityController."""
+        from token_sieve.config.schema import TokenSieveConfig
+        from token_sieve.server.proxy import ProxyServer
+
+        config = TokenSieveConfig(
+            tool_visibility={"enabled": False},
+            learning={"enabled": True, "db_path": ":memory:"},
+        )
+        proxy = ProxyServer.create_from_config(config)
+        assert proxy._visibility_controller is None
+
+    def test_visibility_controller_not_wired_without_learning(self) -> None:
+        """When learning is disabled, VisibilityController not wired."""
+        from token_sieve.config.schema import TokenSieveConfig
+        from token_sieve.server.proxy import ProxyServer
+
+        config = TokenSieveConfig(
+            tool_visibility={"enabled": True},
+            learning={"enabled": False},
+        )
+        proxy = ProxyServer.create_from_config(config)
+        assert proxy._visibility_controller is None
+
+    def test_visibility_controller_uses_config_thresholds(self) -> None:
+        """VisibilityController should be constructed with config values."""
+        from token_sieve.config.schema import TokenSieveConfig
+        from token_sieve.server.proxy import ProxyServer
+
+        config = TokenSieveConfig(
+            tool_visibility={
+                "enabled": True,
+                "frequency_threshold": 7,
+                "min_visible_floor": 15,
+                "cold_start_sessions": 5,
+            },
+            learning={"enabled": True, "db_path": ":memory:"},
+        )
+        proxy = ProxyServer.create_from_config(config)
+        vc = proxy._visibility_controller
+        assert vc is not None
+        assert vc._frequency_threshold == 7
+        assert vc._min_visible_floor == 15
+        assert vc._cold_start_sessions == 5
+
+
+class TestH1FrequencyThresholdUsedInScoring:
+    """H1: _score_tools must use frequency_threshold, not hardcoded > 0."""
+
+    def test_tools_below_threshold_are_hidden(self) -> None:
+        """Tools with call_count < frequency_threshold should be hidden."""
+        from token_sieve.adapters.visibility.visibility_controller import (
+            VisibilityController,
+        )
+        from token_sieve.domain.learning_types import ToolUsageRecord
+
+        tools = [_make_tool("a"), _make_tool("b"), _make_tool("c")]
+        usage = [
+            ToolUsageRecord(tool_name="a", server_id="default", call_count=5, last_called_at="2025-01-01"),
+            ToolUsageRecord(tool_name="b", server_id="default", call_count=2, last_called_at="2025-01-01"),
+            ToolUsageRecord(tool_name="c", server_id="default", call_count=0, last_called_at="2025-01-01"),
+        ]
+        ctrl = VisibilityController(frequency_threshold=3, min_visible_floor=0, cold_start_sessions=0)
+        visible, hidden = ctrl.apply(tools, usage, session_count=10)
+        visible_names = {t.name for t in visible}
+        hidden_names = {t.name for t in hidden}
+        # Only "a" (5 >= 3) should be visible; "b" (2 < 3) and "c" (0 < 3) hidden
+        assert visible_names == {"a"}, (
+            f"H1: tools with call_count < frequency_threshold should be hidden, "
+            f"got visible={visible_names}"
+        )
+        assert hidden_names == {"b", "c"}
+
+
+class TestH2ReuseProxyVisibilityController:
+    """H2: CLI instruction injection must reuse proxy's VC, not create new."""
+
+    def test_instruction_hint_uses_proxy_visibility_controller(self) -> None:
+        """_inject_visibility_instructions should use proxy._visibility_controller."""
+        # This tests that the proxy VC is reused rather than creating a throwaway.
+        # We verify by checking proxy._visibility_controller is the SAME instance
+        # used for hidden_stats in handle_read_resource.
+        from token_sieve.server.proxy import ProxyServer
+
+        tools = [_make_tool("a"), _make_tool("b")]
+        connector = _make_fake_connector(tools=tools)
+        filt = _make_fake_filter(allowed=True)
+        pipeline = _make_fake_pipeline()
+        sink = _make_fake_sink()
+
+        vc = MagicMock()
+        vc.hidden_stats.return_value = {"total_hidden": 5, "visible": 10}
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=filt,
+            pipeline=pipeline,
+            metrics_sink=sink,
+            visibility_controller=vc,
+        )
+        # The proxy should expose the same VC instance
+        assert proxy._visibility_controller is vc

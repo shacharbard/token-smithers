@@ -1040,6 +1040,20 @@ class ProxyServer:
                 metrics_path=expanded_path,
             )
 
+        # C1 fix: Wire VisibilityController when enabled AND learning store exists.
+        # Without learning_store, there are no usage stats for visibility decisions.
+        visibility_controller = None
+        if config.tool_visibility.enabled and learning_store is not None:
+            from token_sieve.adapters.visibility.visibility_controller import (
+                VisibilityController,
+            )
+
+            visibility_controller = VisibilityController(
+                frequency_threshold=config.tool_visibility.frequency_threshold,
+                min_visible_floor=config.tool_visibility.min_visible_floor,
+                cold_start_sessions=config.tool_visibility.cold_start_sessions,
+            )
+
         proxy = cls(
             backend_connector=stub_connector,
             tool_filter=tool_filter,
@@ -1054,6 +1068,7 @@ class ProxyServer:
             semantic_cache=semantic_cache,
             metrics_collector=metrics_collector,
             metrics_writer=metrics_writer,
+            visibility_controller=visibility_controller,
         )
 
         # Phase 07: configure compaction warning threshold

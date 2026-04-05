@@ -26,8 +26,8 @@ def _usage(name: str, call_count: int, server_id: str = "default") -> ToolUsageR
 class TestHideZeroCallTools:
     """Tools with zero calls are hidden."""
 
-    def test_hide_zero_call_tools(self) -> None:
-        """Tools with call_count==0 are hidden; tools with calls > 0 are visible."""
+    def test_hide_below_threshold_tools(self) -> None:
+        """Tools with call_count < frequency_threshold are hidden (H1 fix)."""
         tools = [_tool("a"), _tool("b"), _tool("c"), _tool("d"), _tool("e")]
         usage = [
             _usage("a", 5),
@@ -40,8 +40,9 @@ class TestHideZeroCallTools:
         visible, hidden = ctrl.apply(tools, usage, session_count=10)
         visible_names = {t.name for t in visible}
         hidden_names = {t.name for t in hidden}
-        assert visible_names == {"a", "b", "c"}
-        assert hidden_names == {"d", "e"}
+        # H1: a(5) and b(3) meet threshold>=3; c(1), d(0), e(0) do not
+        assert visible_names == {"a", "b"}
+        assert hidden_names == {"c", "d", "e"}
 
     def test_hide_tools_not_in_usage_stats(self) -> None:
         """Tools not present in usage_stats at all are treated as never-called."""
@@ -57,9 +58,10 @@ class TestTopKFloor:
     """min_visible_floor guarantees minimum visible tools."""
 
     def test_top_k_floor_all_called_exceed_floor(self) -> None:
-        """When called tools exceed floor, all called tools stay visible."""
+        """When called tools meeting threshold exceed floor, all stay visible."""
         tools = [_tool(f"t{i}") for i in range(20)]
-        usage = [_usage(f"t{i}", 12 - i) for i in range(12)]  # 12 called (counts 12..1), 8 not
+        # H1: all 12 must meet frequency_threshold=3, so use counts 15..4
+        usage = [_usage(f"t{i}", 15 - i) for i in range(12)]  # 12 called (counts 15..4), 8 not
         ctrl = VisibilityController(frequency_threshold=3, min_visible_floor=10)
         visible, hidden = ctrl.apply(tools, usage, session_count=10)
         assert len(visible) == 12
