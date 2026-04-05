@@ -1830,3 +1830,128 @@ class TestH5ExplainCompressionGuardedByHiddenCount:
         assert "explain_compression" not in tool_names, (
             "H5: explain_compression should not be injected when hidden count is 0"
         )
+
+
+class TestM2CacheUsageStatsInHandleListTools:
+    """M2: handle_list_tools should cache usage_stats with short TTL."""
+
+    @pytest.mark.anyio
+    async def test_second_list_tools_reuses_cached_stats(self) -> None:
+        """Two rapid calls to handle_list_tools should not query usage_stats twice."""
+        from token_sieve.server.proxy import ProxyServer
+
+        tools = [_make_tool("a")]
+        connector = _make_fake_connector(tools=tools)
+        filt = _make_fake_filter(allowed=True)
+        pipeline = _make_fake_pipeline()
+        sink = _make_fake_sink()
+
+        vc = MagicMock()
+        vc.apply.return_value = (tools, [_make_tool("hidden")])
+
+        learning_store = AsyncMock()
+        learning_store.get_usage_stats = AsyncMock(return_value=[])
+        learning_store.get_session_count = AsyncMock(return_value=10)
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=filt,
+            pipeline=pipeline,
+            metrics_sink=sink,
+            visibility_controller=vc,
+            learning_store=learning_store,
+        )
+
+        await proxy.handle_list_tools()
+        await proxy.handle_list_tools()
+
+        # M2: With caching, get_usage_stats should be called only once
+        assert learning_store.get_usage_stats.await_count == 1, (
+            f"M2: usage_stats queried {learning_store.get_usage_stats.await_count} "
+            f"times but should be cached after first call"
+        )
+
+
+class TestM3CallCachePutAfterFooter:
+    """M3: call cache put must happen after footer logic to avoid caching footer."""
+
+    @pytest.mark.anyio
+    async def test_cached_result_excludes_related_tools_footer(self) -> None:
+        """Call cache should store result BEFORE related-tools footer is appended."""
+        from token_sieve.adapters.cache.call_cache import IdempotentCallCache
+        from token_sieve.server.proxy import ProxyServer
+
+        connector = _make_fake_connector(
+            call_result=_make_call_result("original output")
+        )
+        filt = _make_fake_filter(allowed=True)
+        pipeline = _make_fake_pipeline()
+        sink = _make_fake_sink()
+        cache = IdempotentCallCache(max_entries=100)
+
+        vc = MagicMock()
+        vc.get_hidden_tool_names.return_value = frozenset({"hidden_tool"})
+
+        learning_store = AsyncMock()
+        from token_sieve.domain.learning_types import CooccurrenceRecord
+        learning_store.get_cooccurrence = AsyncMock(return_value=[
+            CooccurrenceRecord(tool_a="hidden_tool", tool_b="related", co_count=5, last_seen="2025-01-01"),
+        ])
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=filt,
+            pipeline=pipeline,
+            metrics_sink=sink,
+            call_cache=cache,
+            visibility_controller=vc,
+            learning_store=learning_store,
+        )
+
+        # Call a hidden tool -- this should add footer but NOT cache the footer
+        await proxy.handle_call_tool("hidden_tool", {})
+        cached = cache.get("hidden_tool", {})
+        if cached is not None:
+            cached_text = cached.content[0].text
+            assert "[Token Smithers] Related tools" not in cached_text, (
+                "M3: call cache includes related-tools footer, causing stale data"
+            )
+
+
+class TestM4VirtualizationCacheInvalidatedOnUnhide:
+    """M4: Schema virtualization cache must be invalidated after unhide."""
+
+    @pytest.mark.anyio
+    async def test_virtualization_cache_cleared_after_discover_tools(self) -> None:
+        """After discover_tools unhides tools, virtualization cache is stale."""
+        from token_sieve.server.proxy import ProxyServer
+
+        tools = [_make_tool("a")]
+        connector = _make_fake_connector(tools=tools)
+        filt = _make_fake_filter(allowed=True)
+        pipeline = _make_fake_pipeline()
+        sink = _make_fake_sink()
+
+        vc = MagicMock()
+        vc.get_hidden_tools.return_value = [_make_tool("hidden1")]
+        vc.get_hidden_tool_names.return_value = frozenset()
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=filt,
+            pipeline=pipeline,
+            metrics_sink=sink,
+            visibility_controller=vc,
+        )
+
+        # Set a fake virtualized cache
+        proxy._virtualized_cache_key = ("some", "key")
+        proxy._virtualized_cache_result = [_make_tool("stale")]
+
+        # Call discover_tools which unhides tools
+        await proxy.handle_call_tool("discover_tools", {"query": "hidden"})
+
+        # M4: virtualized cache should be invalidated
+        assert proxy._virtualized_cache_key is None, (
+            "M4: virtualization cache not invalidated after discover_tools"
+        )

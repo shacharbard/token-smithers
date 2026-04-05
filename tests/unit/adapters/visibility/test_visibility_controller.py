@@ -149,3 +149,34 @@ class TestUnhideForSession:
 
         ctrl.unhide_for_session("b")
         assert ctrl.hidden_stats()["total_hidden"] == 1
+
+
+class TestM1HiddenStatsVisibleCount:
+    """M1: hidden_stats().visible must reflect actual visible count."""
+
+    def test_visible_count_after_apply(self) -> None:
+        """hidden_stats()['visible'] must equal the count of visible tools."""
+        tools = [_tool("a"), _tool("b"), _tool("c"), _tool("d")]
+        usage = [_usage("a", 5), _usage("b", 3)]
+        ctrl = VisibilityController(
+            frequency_threshold=3, min_visible_floor=0, cold_start_sessions=0
+        )
+        visible, hidden = ctrl.apply(tools, usage, session_count=10)
+        stats = ctrl.hidden_stats()
+        assert stats["visible"] == len(visible), (
+            f"M1: visible count should be {len(visible)}, got {stats['visible']}"
+        )
+
+    def test_visible_count_updates_on_reapply(self) -> None:
+        """visible count should update when tool list changes."""
+        tools = [_tool("a"), _tool("b"), _tool("c")]
+        usage_1 = [_usage("a", 5)]
+        ctrl = VisibilityController(
+            frequency_threshold=3, min_visible_floor=0, cold_start_sessions=0
+        )
+        ctrl.apply(tools, usage_1, session_count=10)
+        assert ctrl.hidden_stats()["visible"] == 1
+
+        usage_2 = [_usage("a", 5), _usage("b", 4), _usage("c", 3)]
+        ctrl.apply(tools, usage_2, session_count=10)
+        assert ctrl.hidden_stats()["visible"] == 3

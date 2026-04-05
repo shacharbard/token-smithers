@@ -108,6 +108,9 @@ class ProxyServer:
         self._discover_tools_threshold: int = 5
         self._last_compression_events: OrderedDict[str, list[Any]] = OrderedDict()
         self._last_called_tool: str | None = None
+        # M2: cached usage stats with timestamp for short TTL
+        self._usage_stats_cache: tuple[float, list, int] | None = None
+        self._usage_stats_ttl: float = 30.0  # seconds
         self._server = self._build_mcp_server()
 
     def rebind_connector(self, connector: Any) -> None:
@@ -226,8 +229,19 @@ class ProxyServer:
 
         # Visibility filtering: hide unused tools after reranker, before virtualizer
         if self._visibility_controller is not None and self._learning_store is not None:
-            usage_stats = await self._learning_store.get_usage_stats("default")
-            session_count = await self._learning_store.get_session_count()
+            # M2 fix: cache usage stats with short TTL to avoid repeated DB queries
+            import time as _time
+
+            now = _time.monotonic()
+            if (
+                self._usage_stats_cache is not None
+                and (now - self._usage_stats_cache[0]) < self._usage_stats_ttl
+            ):
+                _, usage_stats, session_count = self._usage_stats_cache
+            else:
+                usage_stats = await self._learning_store.get_usage_stats("default")
+                session_count = await self._learning_store.get_session_count()
+                self._usage_stats_cache = (now, usage_stats, session_count)
             visible, hidden = self._visibility_controller.apply(
                 filtered, usage_stats, session_count=session_count
             )
@@ -527,6 +541,12 @@ class ProxyServer:
             self._visibility_controller.unhide_for_session(tool.name)
 
         lines.append(f"\nThese {len(matches)} tool(s) are now visible for this session.")
+
+        # M4 fix: invalidate virtualization cache after unhiding tools
+        self._virtualized_cache_key = None
+        self._virtualized_cache_result = None
+        # Also invalidate usage stats cache so next list_tools re-queries
+        self._usage_stats_cache = None
 
         return types.CallToolResult(
             content=[types.TextContent(type="text", text="\n".join(lines))],

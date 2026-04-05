@@ -27,6 +27,7 @@ class VisibilityController:
         self._min_visible_floor = min_visible_floor
         self._cold_start_sessions = cold_start_sessions
         self._hidden_tools: dict[str, Any] = {}
+        self._visible_count: int = 0
         self._session_unhidden: set[str] = set()
 
     def apply(
@@ -49,6 +50,7 @@ class VisibilityController:
         # Cold-start bypass: show all tools until enough data exists
         if session_count < self._cold_start_sessions:
             self._hidden_tools = {}
+            self._visible_count = len(tools)
             return list(tools), []
 
         # Build usage lookup: tool_name -> call_count
@@ -69,8 +71,10 @@ class VisibilityController:
             visible.extend(promote)
             hidden = hidden[deficit:]
 
-        # Store hidden tools for later queries
+        # Store hidden tools and visible count for later queries
         self._hidden_tools = {t.name: t for t in hidden}
+        # M1 fix: track visible count for hidden_stats()
+        self._visible_count = len(visible)
 
         return visible, hidden
 
@@ -104,7 +108,7 @@ class VisibilityController:
     def hidden_stats(self) -> dict:
         """Return summary statistics about hidden tools."""
         total_hidden = len(self._hidden_tools)
-        return {"total_hidden": total_hidden, "visible": 0}
+        return {"total_hidden": total_hidden, "visible": self._visible_count}
 
     def get_hidden_tools(self) -> list:
         """Return the list of currently hidden tool objects."""
