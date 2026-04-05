@@ -236,3 +236,66 @@ class TestInstructionInjection:
             # Proxy should still start successfully
             assert exit_code == 0
             mock_proxy.run.assert_awaited_once()
+
+
+class TestSessionRecording:
+    """Session recording at _run_proxy startup."""
+
+    def test_session_recorded_at_startup(self, tmp_path: Path) -> None:
+        """record_session is called with session_id during startup."""
+        config_file = _make_config_file(tmp_path)
+
+        with (
+            patch(
+                "token_sieve.adapters.backend.stdio_transport.StdioClientTransport"
+            ) as mock_transport_cls,
+            patch(
+                "token_sieve.adapters.backend.connector.BackendConnector"
+            ) as mock_connector_cls,
+            patch(
+                "token_sieve.server.proxy.ProxyServer.create_from_config"
+            ) as mock_create,
+        ):
+            mock_connector, mock_proxy, mock_ls = _setup_mocks(
+                mock_transport_cls, mock_connector_cls
+            )
+            mock_create.return_value = mock_proxy
+
+            from token_sieve.cli.main import _run_proxy
+
+            exit_code = asyncio.run(_run_proxy(str(config_file)))
+
+            assert exit_code == 0
+            mock_ls.record_session.assert_awaited_once_with("test-session-123")
+
+    def test_session_recording_failure_does_not_block(
+        self, tmp_path: Path
+    ) -> None:
+        """If record_session raises, proxy still starts."""
+        config_file = _make_config_file(tmp_path)
+
+        with (
+            patch(
+                "token_sieve.adapters.backend.stdio_transport.StdioClientTransport"
+            ) as mock_transport_cls,
+            patch(
+                "token_sieve.adapters.backend.connector.BackendConnector"
+            ) as mock_connector_cls,
+            patch(
+                "token_sieve.server.proxy.ProxyServer.create_from_config"
+            ) as mock_create,
+        ):
+            mock_connector, mock_proxy, mock_ls = _setup_mocks(
+                mock_transport_cls, mock_connector_cls
+            )
+            mock_ls.record_session = AsyncMock(
+                side_effect=RuntimeError("DB write failed")
+            )
+            mock_create.return_value = mock_proxy
+
+            from token_sieve.cli.main import _run_proxy
+
+            exit_code = asyncio.run(_run_proxy(str(config_file)))
+
+            assert exit_code == 0
+            mock_proxy.run.assert_awaited_once()
