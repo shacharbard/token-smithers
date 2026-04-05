@@ -230,6 +230,11 @@ class TestLearningStoreStructuralSubtyping:
             ) -> None:
                 pass
 
+            async def record_compression_events_batch(
+                self, session_id: str, events: list[CompressionEvent], tool_name: str
+            ) -> None:
+                pass
+
             async def record_cooccurrence(
                 self, tool_a: str, tool_b: str
             ) -> None:

@@ -216,7 +216,7 @@ class TestLearningStoreIntegration:
         )
         store = AsyncMock()
         store.record_call = AsyncMock()
-        store.record_compression_event = AsyncMock()
+        store.record_compression_events_batch = AsyncMock()
 
         proxy = ProxyServer(
             backend_connector=connector,
@@ -227,7 +227,8 @@ class TestLearningStoreIntegration:
         )
 
         await proxy.handle_call_tool("read_file", {"path": "/foo"})
-        store.record_compression_event.assert_called_once()
+        # M1 fix: proxy now uses batch method instead of individual calls
+        store.record_compression_events_batch.assert_called_once()
 
 
 class TestMetricsCollectorIntegration:
