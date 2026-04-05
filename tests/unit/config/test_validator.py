@@ -316,3 +316,23 @@ class TestSafetyNetAndContentSpecificGap:
                     f"Adapter '{name}' is in registry but not categorized "
                     f"in any validator phase set"
                 )
+
+
+class TestWithinPhaseOrdering:
+    """M16: Validator must catch within-phase adapter mis-ordering."""
+
+    def test_warns_on_wrong_within_phase_order(self) -> None:
+        """rle_encoder before bm25_sentence_selector should warn."""
+        from token_sieve.config.validator import validate_adapter_order
+
+        # bm25 should come before rle, so reversed order is wrong
+        result = validate_adapter_order(["rle_encoder", "bm25_sentence_selector"])
+        assert any("bm25_sentence_selector" in w and "before" in w for w in result)
+
+    def test_correct_within_phase_order_no_warning(self) -> None:
+        """bm25_sentence_selector before rle_encoder should not warn."""
+        from token_sieve.config.validator import validate_adapter_order
+
+        result = validate_adapter_order(["bm25_sentence_selector", "rle_encoder"])
+        within_phase_warnings = [w for w in result if "within" in w]
+        assert len(within_phase_warnings) == 0

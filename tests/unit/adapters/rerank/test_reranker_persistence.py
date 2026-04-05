@@ -193,3 +193,39 @@ class TestPersistCooccurrence:
     ) -> None:
         await persistence.persist_cooccurrence(fake_store, [])
         assert len(fake_store._cooccurrences) == 0
+
+
+class TestInjectStatsPublicAPI:
+    """M19: bootstrap must use inject_stats() instead of private attr mutation."""
+
+    def test_inject_stats_sets_state(self) -> None:
+        """inject_stats() must properly set stats, counter, and frozen_order."""
+        from token_sieve.adapters.rerank.statistical_reranker import ToolUsageStats
+
+        reranker = StatisticalReranker()
+        stats = {"tool_a": ToolUsageStats(call_count=5, last_called_at=0)}
+        reranker.inject_stats(stats, call_counter=1, frozen_order=["tool_a"])
+
+        assert reranker._stats == stats
+        assert reranker._call_counter == 1
+        assert reranker._frozen_order == ["tool_a"]
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_uses_inject_stats(self) -> None:
+        """bootstrap() should not directly write to _stats, _call_counter, _frozen_order."""
+        from unittest.mock import patch
+
+        reranker = StatisticalReranker()
+        fake_store = FakeLearningStore()
+        fake_store.seed_usage([
+            ToolUsageRecord(tool_name="tool_x", server_id="s", call_count=3, last_called_at="t"),
+        ])
+        await fake_store.save_frozen_order("s", ["tool_x"])
+
+        persistence = RerankerPersistence()
+
+        with patch.object(reranker, "inject_stats", wraps=reranker.inject_stats) as mock_inject:
+            await persistence.bootstrap(reranker, fake_store, "s")
+            mock_inject.assert_called_once()
+
+        assert "tool_x" in reranker._stats

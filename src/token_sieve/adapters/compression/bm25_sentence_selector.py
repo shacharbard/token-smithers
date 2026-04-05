@@ -59,6 +59,13 @@ class BM25SentenceSelector:
         keep_ratio: float = 0.2,
         min_sentences: int = _MIN_SENTENCES_DEFAULT,
     ) -> None:
+        # M17 fix: validate constructor params
+        if not (0.0 < keep_ratio <= 1.0):
+            raise ValueError(f"keep_ratio must be in (0, 1], got {keep_ratio}")
+        if threshold_tokens < 0:
+            raise ValueError(f"threshold_tokens must be >= 0, got {threshold_tokens}")
+        if min_sentences < 1:
+            raise ValueError(f"min_sentences must be >= 1, got {min_sentences}")
         self._threshold_tokens = threshold_tokens
         self._keep_ratio = keep_ratio
         self._min_sentences = min_sentences

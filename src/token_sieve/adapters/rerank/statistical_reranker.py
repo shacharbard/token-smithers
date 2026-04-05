@@ -87,12 +87,39 @@ class StatisticalReranker:
         """Reset frozen order, allowing recomputation on next transform()."""
         self._frozen_order = None
 
+    def inject_stats(
+        self,
+        stats: dict[str, "ToolUsageStats"],
+        call_counter: int,
+        frozen_order: list[str] | None = None,
+    ) -> None:
+        """M19: Public method for bootstrapping reranker state.
+
+        Used by RerankerPersistence.bootstrap() to inject cross-session
+        usage data without directly mutating private attributes.
+
+        Args:
+            stats: Tool name -> usage stats mapping.
+            call_counter: Next call counter value (for recency tracking).
+            frozen_order: Optional persisted frozen order to restore.
+        """
+        self._stats = dict(stats)
+        self._call_counter = call_counter
+        if frozen_order is not None:
+            self._frozen_order = frozen_order
+
     def transform(self, tools: list[ToolMetadata]) -> list[ToolMetadata]:
         """Reorder tools by usage score (most-used first).
 
         On the first call, computes the order and freezes it. Subsequent calls
         return tools in the frozen order. Tools not in the frozen order are
         appended at the end, preserving their relative input order.
+
+        M18 note: The freeze-on-first-call is intentional for cache alignment.
+        Tool list order is part of the cache key for schema virtualization.
+        If reranker recomputed order every call, the virtualization cache
+        would never hit. The unfreeze() method exists for future use at
+        natural session breakpoints (e.g., compaction).
         """
         if not tools:
             return list(tools)

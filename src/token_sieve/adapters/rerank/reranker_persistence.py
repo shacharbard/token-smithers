@@ -48,23 +48,25 @@ class RerankerPersistence:
         if not records:
             return
 
-        # Pre-populate reranker stats from historical data
+        # M19 fix: use public inject_stats() instead of mutating private attrs
+        stats: dict[str, ToolUsageStats] = {}
+        counter = 0
         for record in records:
-            reranker._stats[record.tool_name] = ToolUsageStats(
+            stats[record.tool_name] = ToolUsageStats(
                 call_count=record.call_count,
-                last_called_at=reranker._call_counter,
+                last_called_at=counter,
             )
-            # Advance counter so each tool gets a unique recency value
-            reranker._call_counter += 1
+            counter += 1
 
         # Restore frozen order if available
+        frozen_order: list[str] | None = None
         try:
             if hasattr(learning_store, "load_frozen_order"):
-                frozen = await learning_store.load_frozen_order(server_id)
-                if frozen is not None:
-                    reranker._frozen_order = frozen
+                frozen_order = await learning_store.load_frozen_order(server_id)
         except Exception:
             logger.debug("bootstrap: failed to load frozen order", exc_info=True)
+
+        reranker.inject_stats(stats, counter, frozen_order)
 
     async def persist_call(
         self,

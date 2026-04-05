@@ -441,3 +441,42 @@ class TestRunSetup:
         assert result == 0
         written = json.loads(config_path.read_text())
         assert written["mcpServers"]["a"]["command"] == "npx"
+
+
+class TestWrapServersPreservesFields:
+    """M8: wrap_servers must preserve non-command/args fields (env, disabled, etc.)."""
+
+    def test_env_field_preserved(self, tmp_path: Path) -> None:
+        """Server env field must survive wrapping."""
+        configs_dir = tmp_path / "configs"
+        raw = {
+            "mcpServers": {
+                "my_server": {
+                    "command": "node",
+                    "args": ["server.js"],
+                    "env": {"MY_VAR": "hello"},
+                    "disabled": False,
+                    "alwaysAllow": ["read"],
+                }
+            }
+        }
+        servers = [
+            McpServerEntry(
+                name="my_server",
+                command="node",
+                args=["server.js"],
+            )
+        ]
+        config = McpConfigFile(
+            path=tmp_path / "config.json",
+            scope="project",
+            servers=servers,
+            raw_data=raw,
+        )
+
+        wrap_servers(config, ["my_server"], str(configs_dir))
+
+        wrapped = raw["mcpServers"]["my_server"]
+        assert wrapped.get("env") == {"MY_VAR": "hello"}, "env field dropped"
+        assert wrapped.get("disabled") is False, "disabled field dropped"
+        assert wrapped.get("alwaysAllow") == ["read"], "alwaysAllow field dropped"

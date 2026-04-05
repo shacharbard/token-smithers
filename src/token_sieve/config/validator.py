@@ -55,6 +55,22 @@ _PHASES: list[tuple[str, frozenset[str]]] = [
     ("safety_net", SAFETY_NET),
 ]
 
+# M16 fix: within-phase ordering constraints.
+# Maps (earlier, later) pairs — the first adapter should come before the second.
+_WITHIN_PHASE_ORDER: list[tuple[str, str]] = [
+    # In content_specific: test_output_compressor strips lines before
+    # progressive_disclosure summarizes, which is before key_aliasing
+    ("test_output_compressor", "progressive_disclosure"),
+    ("progressive_disclosure", "key_aliasing"),
+    # In format: toon_compressor converts arrays before yaml_transcoder
+    # handles objects. bm25_sentence_selector should run before rle_encoder
+    # (BM25 selects sentences, then RLE compresses repeated tokens)
+    ("toon_compressor", "yaml_transcoder"),
+    ("bm25_sentence_selector", "rle_encoder"),
+    # In safety_net: smart_truncation before plain truncation
+    ("smart_truncation", "truncation"),
+]
+
 
 def validate_adapter_order(adapter_names: list[str]) -> list[str]:
     """Validate adapter ordering conventions.
@@ -85,6 +101,9 @@ def validate_adapter_order(adapter_names: list[str]) -> list[str]:
     # adapters from an earlier phase
     _check_phase_ordering(adapter_names, warnings)
 
+    # M16 fix: check within-phase ordering constraints
+    _check_within_phase_ordering(adapter_names, warnings)
+
     return warnings
 
 
@@ -114,6 +133,20 @@ def _check_phase_ordering(adapter_names: list[str], warnings: list[str]) -> None
             )
         else:
             max_phase_seen = phase
+
+
+def _check_within_phase_ordering(
+    adapter_names: list[str], warnings: list[str]
+) -> None:
+    """M16: Check within-phase adapter ordering constraints."""
+    name_to_idx = {name: i for i, name in enumerate(adapter_names)}
+    for earlier, later in _WITHIN_PHASE_ORDER:
+        if earlier in name_to_idx and later in name_to_idx:
+            if name_to_idx[earlier] > name_to_idx[later]:
+                warnings.append(
+                    f"'{earlier}' should come before '{later}' within "
+                    f"the same phase"
+                )
 
 
 def validate_config(config: TokenSieveConfig) -> list[str]:

@@ -43,12 +43,12 @@ class Model2VecEmbedder:
             # Double-check after acquiring lock
             if self._model is not None:
                 return
-        from model2vec import StaticModel
+            from model2vec import StaticModel
 
-        self._model = StaticModel.from_pretrained(self._model_name)
-        # Probe dimension from a test embedding
-        probe = self._model.encode("")
-        self._dimension = len(probe)
+            self._model = StaticModel.from_pretrained(self._model_name)
+            # Probe dimension from a test embedding
+            probe = self._model.encode("")
+            self._dimension = len(probe)
 
     def embed(self, text: str) -> list[float]:
         """Return a fixed-dimension float vector for *text*."""

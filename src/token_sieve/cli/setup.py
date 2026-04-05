@@ -245,12 +245,16 @@ def wrap_servers(
         yaml_path = configs_path / f"{name}.yaml"
         yaml_path.write_text(generate_sieve_config(server))
 
-        # Update raw_data — use full binary path for cross-project compatibility
+        # M8 fix: preserve the full original server dict (env, disabled, alwaysAllow, etc.)
+        # before replacing command/args for wrapping. Store the original under
+        # _token_sieve_original so unwrap can fully restore it.
         yaml_abs = str(yaml_path.resolve())
-        config_file.raw_data["mcpServers"][name] = {
-            "command": ts_bin,
-            "args": ["--config", yaml_abs],
-        }
+        original_dict = dict(config_file.raw_data["mcpServers"][name])
+        wrapped_dict = dict(original_dict)  # copy all fields (env, disabled, etc.)
+        wrapped_dict["command"] = ts_bin
+        wrapped_dict["args"] = ["--config", yaml_abs]
+        wrapped_dict["_token_sieve_original"] = original_dict
+        config_file.raw_data["mcpServers"][name] = wrapped_dict
 
         # Update server entry
         server.command = ts_bin
