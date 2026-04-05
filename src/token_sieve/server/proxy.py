@@ -23,6 +23,28 @@ from token_sieve.domain.pipeline import CompressionPipeline
 from token_sieve.server.metrics_sink import StderrMetricsSink
 from token_sieve.server.tool_filter import ToolFilter
 
+_DISCOVER_TOOLS_SYNTHETIC = types.Tool(
+    name="discover_tools",
+    description="discover_tools(query) Search hidden tools by keyword/description.",
+    inputSchema={
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"],
+    },
+)
+
+_EXPLAIN_COMPRESSION_SYNTHETIC = types.Tool(
+    name="explain_compression",
+    description=(
+        "explain_compression(?tool_name) Show which adapters compressed "
+        "the last result and ratios."
+    ),
+    inputSchema={
+        "type": "object",
+        "properties": {"tool_name": {"type": "string"}},
+    },
+)
+
 
 class ProxyServer:
     """MCP proxy server with tool filtering and result compression.
@@ -42,6 +64,8 @@ class ProxyServer:
 
     _MAX_LEARNING_FAILURES: int = 3
 
+    _SYNTHETIC_TOOLS: frozenset[str] = frozenset({"discover_tools", "explain_compression"})
+
     def __init__(
         self,
         backend_connector: Any,
@@ -57,6 +81,7 @@ class ProxyServer:
         semantic_cache: Any | None = None,
         metrics_collector: Any | None = None,
         metrics_writer: Any | None = None,
+        visibility_controller: Any | None = None,
     ) -> None:
         self._connector = backend_connector
         self._filter = tool_filter
@@ -78,6 +103,8 @@ class ProxyServer:
         self._session_id: str = str(uuid.uuid4())
         self._compaction_warned: bool = False
         self._compaction_warning_threshold: int = 80000
+        self._visibility_controller = visibility_controller
+        self._discover_tools_threshold: int = 5
         self._server = self._build_mcp_server()
 
     def rebind_connector(self, connector: Any) -> None:
@@ -190,6 +217,19 @@ class ProxyServer:
             # Rebuild types.Tool list in reranked order
             tool_by_name = {t.name: t for t in filtered}
             filtered = [tool_by_name[m.name] for m in reranked if m.name in tool_by_name]
+
+        # Visibility filtering: hide unused tools after reranker, before virtualizer
+        if self._visibility_controller is not None and self._learning_store is not None:
+            usage_stats = await self._learning_store.get_usage_stats("default")
+            session_count = await self._learning_store.get_session_count()
+            visible, hidden = self._visibility_controller.apply(
+                filtered, usage_stats, session_count=session_count
+            )
+            filtered = visible
+            # Append synthetic tools
+            if len(hidden) > self._discover_tools_threshold:
+                filtered.append(_DISCOVER_TOOLS_SYNTHETIC)
+            filtered.append(_EXPLAIN_COMPRESSION_SYNTHETIC)
 
         # Schema virtualization: compress tool schemas after reranking
         if self._schema_virtualizer is not None:
