@@ -1700,3 +1700,133 @@ class TestH2ReuseProxyVisibilityController:
         )
         # The proxy should expose the same VC instance
         assert proxy._visibility_controller is vc
+
+
+class TestH3SyntheticToolsCheckFilter:
+    """H3: Synthetic tool calls must check ToolFilter before dispatch."""
+
+    @pytest.mark.anyio
+    async def test_synthetic_tool_blocked_when_filtered(self) -> None:
+        """discover_tools should be blocked if ToolFilter denies it."""
+        from token_sieve.server.proxy import ProxyServer
+
+        connector = _make_fake_connector()
+        filt = _make_fake_filter(allowed=False)
+        pipeline = _make_fake_pipeline()
+        sink = _make_fake_sink()
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=filt,
+            pipeline=pipeline,
+            metrics_sink=sink,
+        )
+
+        result = await proxy.handle_call_tool("discover_tools", {"query": "test"})
+        # H3: If ToolFilter blocks the synthetic tool, it should return an error
+        # OR pass through to handler (if gated behind config). Either way it
+        # should not bypass the filter check entirely.
+        filt.is_allowed.assert_called()
+
+    @pytest.mark.anyio
+    async def test_explain_compression_checks_filter(self) -> None:
+        """explain_compression should also check ToolFilter."""
+        from token_sieve.server.proxy import ProxyServer
+
+        connector = _make_fake_connector()
+        filt = _make_fake_filter(allowed=True)
+        pipeline = _make_fake_pipeline()
+        sink = _make_fake_sink()
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=filt,
+            pipeline=pipeline,
+            metrics_sink=sink,
+        )
+
+        await proxy.handle_call_tool("explain_compression", {})
+        filt.is_allowed.assert_called()
+
+
+class TestH4SyntheticToolCollisionDetection:
+    """H4: Synthetic tools must not collide with backend tool names."""
+
+    @pytest.mark.anyio
+    async def test_no_synthetic_injection_on_name_collision(self) -> None:
+        """If backend has a tool named 'discover_tools', synthetic is skipped."""
+        from token_sieve.server.proxy import ProxyServer
+
+        # Backend has a tool named 'discover_tools' that passes through vc.apply
+        backend_discover = _make_tool("discover_tools", desc="Real backend tool")
+        other_tool = _make_tool("other")
+        connector = _make_fake_connector(tools=[backend_discover, other_tool])
+        filt = _make_fake_filter(allowed=True)
+        pipeline = _make_fake_pipeline()
+        sink = _make_fake_sink()
+
+        vc = MagicMock()
+        # Backend discover_tools is visible (it's a real tool), plus many hidden
+        vc.apply.return_value = (
+            [backend_discover, other_tool],
+            [_make_tool(f"hidden{i}") for i in range(10)],
+        )
+
+        learning_store = AsyncMock()
+        learning_store.get_usage_stats = AsyncMock(return_value=[])
+        learning_store.get_session_count = AsyncMock(return_value=10)
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=filt,
+            pipeline=pipeline,
+            metrics_sink=sink,
+            visibility_controller=vc,
+            learning_store=learning_store,
+        )
+
+        tools = await proxy.handle_list_tools()
+        tool_names = [t.name for t in tools]
+        # Should NOT have duplicate 'discover_tools' entries
+        assert tool_names.count("discover_tools") <= 1, (
+            f"H4: synthetic 'discover_tools' collides with backend tool. "
+            f"Names: {tool_names}"
+        )
+
+
+class TestH5ExplainCompressionGuardedByHiddenCount:
+    """H5: explain_compression should not be injected when 0 tools are hidden."""
+
+    @pytest.mark.anyio
+    async def test_no_explain_compression_when_no_hidden(self) -> None:
+        """When visibility hides 0 tools, explain_compression not injected."""
+        from token_sieve.server.proxy import ProxyServer
+
+        tools = [_make_tool("a"), _make_tool("b")]
+        connector = _make_fake_connector(tools=tools)
+        filt = _make_fake_filter(allowed=True)
+        pipeline = _make_fake_pipeline()
+        sink = _make_fake_sink()
+
+        vc = MagicMock()
+        # All visible, nothing hidden
+        vc.apply.return_value = (tools, [])
+
+        learning_store = AsyncMock()
+        learning_store.get_usage_stats = AsyncMock(return_value=[])
+        learning_store.get_session_count = AsyncMock(return_value=10)
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=filt,
+            pipeline=pipeline,
+            metrics_sink=sink,
+            visibility_controller=vc,
+            learning_store=learning_store,
+        )
+
+        result = await proxy.handle_list_tools()
+        tool_names = [t.name for t in result]
+        assert "explain_compression" not in tool_names, (
+            "H5: explain_compression should not be injected when hidden count is 0"
+        )

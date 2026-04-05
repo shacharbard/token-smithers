@@ -232,10 +232,16 @@ class ProxyServer:
                 filtered, usage_stats, session_count=session_count
             )
             filtered = visible
-            # Append synthetic tools
-            if len(hidden) > self._discover_tools_threshold:
-                filtered.append(_DISCOVER_TOOLS_SYNTHETIC)
-            filtered.append(_EXPLAIN_COMPRESSION_SYNTHETIC)
+            # H4 fix: detect name collisions before injecting synthetic tools
+            existing_names = {t.name for t in filtered}
+            # Append synthetic tools only if hidden tools exist and no collision
+            if len(hidden) > 0:
+                if len(hidden) > self._discover_tools_threshold:
+                    if _DISCOVER_TOOLS_SYNTHETIC.name not in existing_names:
+                        filtered.append(_DISCOVER_TOOLS_SYNTHETIC)
+                # H5 fix: only inject explain_compression when tools are hidden
+                if _EXPLAIN_COMPRESSION_SYNTHETIC.name not in existing_names:
+                    filtered.append(_EXPLAIN_COMPRESSION_SYNTHETIC)
 
         # Schema virtualization: compress tool schemas after reranking
         if self._schema_virtualizer is not None:
@@ -594,11 +600,7 @@ class ProxyServer:
         7. Cache result and record usage
         8. Trigger invalidation for mutating calls
         """
-        # Synthetic tools: dispatch BEFORE filter gate (bypass ToolFilter)
-        if name in self._SYNTHETIC_TOOLS:
-            return await self._dispatch_synthetic(name, arguments)
-
-        # Gate: blocked tools
+        # Gate: blocked tools (H3 fix: synthetic tools also checked)
         if not self._filter.is_allowed(name):
             return types.CallToolResult(
                 content=[
@@ -609,6 +611,10 @@ class ProxyServer:
                 ],
                 isError=True,
             )
+
+        # H3 fix: dispatch synthetic tools AFTER filter gate
+        if name in self._SYNTHETIC_TOOLS:
+            return await self._dispatch_synthetic(name, arguments)
 
         # Short-circuit: check semantic cache before exact-match cache
         # Safe-by-default: only use cache for known read-only tools (allowlist)

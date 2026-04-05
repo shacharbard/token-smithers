@@ -229,7 +229,9 @@ class TestHandleListToolsVisibility:
 
         result = await proxy.handle_list_tools()
         names = {t.name for t in result}
-        assert "explain_compression" in names
+        # H5 fix: explain_compression only injected when hidden > 0
+        # Here all 3 tools meet threshold and are visible, so no injection
+        assert "explain_compression" not in names
 
 
 # ---------------------------------------------------------------------------
@@ -337,7 +339,9 @@ class TestSyntheticToolDispatch:
         )
 
         result = await proxy.handle_call_tool("discover_tools", {"query": "all"})
-        assert not result.isError
+        # H3 fix: synthetic tools now go through ToolFilter. Since filter
+        # blocks all tools, discover_tools is also blocked.
+        assert result.isError
 
     @pytest.mark.anyio
     async def test_synthetic_tools_not_recorded(self) -> None:
