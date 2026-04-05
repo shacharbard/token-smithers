@@ -103,3 +103,47 @@ class TestColdStartBypass:
         visible, hidden = ctrl.apply(tools, usage, session_count=3)
         assert len(visible) == 1
         assert len(hidden) == 1
+
+
+class TestUnhideForSession:
+    """Session-level unhiding of hidden tools."""
+
+    def test_unhide_for_session(self) -> None:
+        """After apply() hides a tool, unhide makes it visible on next apply()."""
+        tools = [_tool("a"), _tool("b"), _tool("c")]
+        usage = [_usage("a", 5)]
+        ctrl = VisibilityController(
+            frequency_threshold=3, min_visible_floor=0, cold_start_sessions=0
+        )
+        # First apply: b, c hidden
+        visible, hidden = ctrl.apply(tools, usage, session_count=10)
+        assert {t.name for t in hidden} == {"b", "c"}
+
+        # Unhide "b"
+        ctrl.unhide_for_session("b")
+
+        # Second apply: b should now be visible
+        visible, hidden = ctrl.apply(tools, usage, session_count=10)
+        assert "b" in {t.name for t in visible}
+        assert "b" not in {t.name for t in hidden}
+
+    def test_unhide_unknown_tool_is_noop(self) -> None:
+        """Unhiding a tool not in hidden set does not error."""
+        ctrl = VisibilityController(
+            frequency_threshold=3, min_visible_floor=0, cold_start_sessions=0
+        )
+        # No apply() called yet, no hidden tools
+        ctrl.unhide_for_session("nonexistent")  # should not raise
+
+    def test_hidden_stats_reflects_unhide(self) -> None:
+        """After unhide, hidden_stats() total decreases."""
+        tools = [_tool("a"), _tool("b"), _tool("c")]
+        usage = [_usage("a", 5)]
+        ctrl = VisibilityController(
+            frequency_threshold=3, min_visible_floor=0, cold_start_sessions=0
+        )
+        ctrl.apply(tools, usage, session_count=10)
+        assert ctrl.hidden_stats()["total_hidden"] == 2
+
+        ctrl.unhide_for_session("b")
+        assert ctrl.hidden_stats()["total_hidden"] == 1

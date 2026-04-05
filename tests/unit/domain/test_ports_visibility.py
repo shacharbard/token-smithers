@@ -53,3 +53,16 @@ class TestVisibilityControllerPortProtocol:
         assert hasattr(VisibilityControllerPort, "__protocol_attrs__") or hasattr(
             VisibilityControllerPort, "_is_protocol"
         )
+
+
+class TestVisibilityControllerSatisfiesPort:
+    """Real VisibilityController satisfies the port protocol."""
+
+    def test_controller_satisfies_protocol(self) -> None:
+        """VisibilityController is a structural subtype of VisibilityControllerPort."""
+        from token_sieve.adapters.visibility.visibility_controller import (
+            VisibilityController,
+        )
+
+        ctrl = VisibilityController()
+        assert isinstance(ctrl, VisibilityControllerPort)
