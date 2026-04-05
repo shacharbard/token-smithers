@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS result_cache (
     hit_count INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_result_cache_tool ON result_cache(tool_name, args_hash);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_result_cache_dedup ON result_cache(tool_name, args_hash);
 
 CREATE TABLE IF NOT EXISTS compression_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -225,11 +226,16 @@ class SQLiteLearningStore:
         args_hash = compute_args_hash_from_normalized(args_normalized)
         now = datetime.now(timezone.utc).isoformat()
 
-        # Upsert: if same tool+hash exists, update; otherwise insert
+        # M4 fix: UPSERT to prevent duplicate (tool_name, args_hash) entries
         await self._db.execute(
             """\
             INSERT INTO result_cache (tool_name, args_hash, args_normalized, result_text, created_at)
             VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(tool_name, args_hash) DO UPDATE SET
+                result_text = excluded.result_text,
+                args_normalized = excluded.args_normalized,
+                created_at = excluded.created_at,
+                hit_count = 0
             """,
             (tool_name, args_hash, args_normalized, result, now),
         )

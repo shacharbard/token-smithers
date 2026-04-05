@@ -181,3 +181,77 @@ class TestHitCountIncrement:
         hit2 = await sqlite_cache.lookup_similar("read_file", '{"path":"/a"}', 0.85)
         assert hit2 is not None
         assert hit2.hit_count == 2
+
+
+class TestTTLEnforcedOnLookup:
+    """H1: Expired entries must NOT be returned from _exact_lookup or _fuzzy_lookup."""
+
+    @pytest.mark.asyncio
+    async def test_expired_exact_lookup_returns_none(self) -> None:
+        """An entry older than TTL must not be returned by exact lookup."""
+        import time
+
+        cache = SQLiteSemanticCache(db_path=":memory:", ttl_seconds=1)
+        await cache.initialize()
+
+        await cache.cache_result("read_file", '{"path":"/a"}', "hash_a", "old content")
+
+        # Manually backdate the created_at to make it expired
+        await cache._conn.execute(
+            "UPDATE result_cache SET created_at = ?", (time.time() - 100,)
+        )
+        await cache._conn.commit()
+
+        hit = await cache.lookup_similar("read_file", '{"path":"/a"}', 0.85)
+        assert hit is None, "Expired entry should not be returned"
+
+        await cache.close()
+
+    @pytest.mark.asyncio
+    async def test_expired_fuzzy_lookup_returns_none(self) -> None:
+        """An entry older than TTL must not be returned by fuzzy lookup."""
+        import time
+
+        cache = SQLiteSemanticCache(db_path=":memory:", ttl_seconds=1)
+        await cache.initialize()
+
+        await cache.cache_result("read_file", '{"path":"/a.py"}', "hash_a", "old content")
+
+        # Backdate to make expired
+        await cache._conn.execute(
+            "UPDATE result_cache SET created_at = ?", (time.time() - 100,)
+        )
+        await cache._conn.commit()
+
+        # Use slightly different args for fuzzy match
+        hit = await cache.lookup_similar("read_file", '{"path":"/a.py"}', 0.5)
+        assert hit is None, "Expired entry should not be returned via fuzzy lookup"
+
+        await cache.close()
+
+
+class TestUniqueConstraintOnCache:
+    """H3: Duplicate (tool_name, args_hash) entries must not accumulate."""
+
+    @pytest.mark.asyncio
+    async def test_duplicate_insert_replaces(self) -> None:
+        """Caching the same tool+args twice should result in exactly 1 row."""
+        cache = SQLiteSemanticCache(db_path=":memory:")
+        await cache.initialize()
+
+        await cache.cache_result("read_file", '{"path":"/a"}', "hash_a", "v1")
+        await cache.cache_result("read_file", '{"path":"/a"}', "hash_a", "v2")
+
+        cursor = await cache._conn.execute(
+            "SELECT COUNT(*) FROM result_cache WHERE tool_name = ? AND args_hash = ?",
+            ("read_file", "hash_a"),
+        )
+        row = await cursor.fetchone()
+        assert row[0] == 1, f"Expected 1 entry, got {row[0]} — duplicates accumulated"
+
+        # The latest value should be returned
+        hit = await cache.lookup_similar("read_file", '{"path":"/a"}', 0.85)
+        assert hit is not None
+        assert hit.result_text == "v2"
+
+        await cache.close()

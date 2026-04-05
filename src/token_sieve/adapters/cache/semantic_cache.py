@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS result_cache (
 _CREATE_INDEX_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_result_cache_tool ON result_cache(tool_name);",
     "CREATE INDEX IF NOT EXISTS idx_result_cache_hash ON result_cache(args_hash);",
+    # H3 fix: prevent duplicate (tool_name, args_hash) entries
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_result_cache_dedup ON result_cache(tool_name, args_hash);",
 ]
 
 # Migration: add embedding column if it doesn't exist
@@ -144,8 +146,9 @@ class SQLiteSemanticCache:
                 except Exception:
                     logger.debug("embedder.embed failed, storing without embedding", exc_info=True)
 
+            # H3 fix: use INSERT OR REPLACE to prevent duplicate entries
             await self._conn.execute(
-                """INSERT INTO result_cache
+                """INSERT OR REPLACE INTO result_cache
                    (tool_name, args_normalized, args_hash, result_text,
                     hit_count, created_at, embedding)
                    VALUES (?, ?, ?, ?, 0, ?, ?)""",
@@ -182,12 +185,15 @@ class SQLiteSemanticCache:
         """O(1) lookup by args_hash index."""
         if self._conn is None:
             return None
+        # H1 fix: enforce TTL on lookup — expired entries must not be served
+        min_created = time.time() - self._ttl_seconds
         cursor = await self._conn.execute(
             """SELECT id, result_text, hit_count
                FROM result_cache
                WHERE tool_name = ? AND args_hash = ?
+                 AND created_at >= ?
                LIMIT 1""",
-            (tool_name, args_hash),
+            (tool_name, args_hash, min_created),
         )
         row = await cursor.fetchone()
         if row is None:
@@ -226,13 +232,15 @@ class SQLiteSemanticCache:
             except Exception:
                 logger.debug("embedder.embed failed, falling back to SequenceMatcher", exc_info=True)
 
+        # H1 fix: enforce TTL on fuzzy lookup — expired entries must not be scanned
+        min_created = time.time() - self._ttl_seconds
         cursor = await self._conn.execute(
             """SELECT id, args_normalized, result_text, hit_count, embedding
                FROM result_cache
-               WHERE tool_name = ?
+               WHERE tool_name = ? AND created_at >= ?
                ORDER BY created_at DESC
                LIMIT ?""",
-            (tool_name, self._fuzzy_scan_limit),
+            (tool_name, min_created, self._fuzzy_scan_limit),
         )
         rows = await cursor.fetchall()
 

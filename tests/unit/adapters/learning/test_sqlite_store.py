@@ -302,3 +302,32 @@ class TestHashKeyConsistency:
         await store.cache_result(tool_name, args_normalized, "found_it")
         result = await store.lookup_similar(tool_name, args_normalized, 1.0)
         assert result == "found_it"
+
+
+class TestResultCacheDedup:
+    """M4: Duplicate cache entries must not accumulate in sqlite_store."""
+
+    @pytest.fixture
+    async def store(self):
+        from token_sieve.adapters.learning.sqlite_store import SQLiteLearningStore
+
+        s = await SQLiteLearningStore.connect(":memory:")
+        yield s
+        await s.close()
+
+    @pytest.mark.asyncio
+    async def test_duplicate_cache_does_not_create_extra_rows(self, store) -> None:
+        """Caching same tool+args twice should result in 1 row, not 2."""
+        await store.cache_result("read_file", '{"path":"/a"}', "v1")
+        await store.cache_result("read_file", '{"path":"/a"}', "v2")
+
+        async with store._db.execute(
+            "SELECT COUNT(*) FROM result_cache WHERE tool_name = ?",
+            ("read_file",),
+        ) as cursor:
+            row = await cursor.fetchone()
+            assert row[0] == 1, f"Expected 1 entry, got {row[0]} — duplicates accumulated"
+
+        # Latest value wins
+        result = await store.lookup_similar("read_file", '{"path":"/a"}', 1.0)
+        assert result == "v2"
