@@ -24,6 +24,11 @@ class ToonCompressor:
     Satisfies CompressionStrategy protocol structurally.
     """
 
+    def __init__(self) -> None:
+        # M15 fix: cache parse result between can_handle() and compress()
+        self._cached_parse: tuple[list[str], list[dict[str, Any]]] | None = None
+        self._cached_content_id: int | None = None
+
     @staticmethod
     def is_uniform_array(data: Any) -> bool:
         """Check if data is a uniform array eligible for TOON encoding.
@@ -45,11 +50,24 @@ class ToonCompressor:
             return False
 
         parsed = self._try_parse_uniform_array(envelope.content)
+        if parsed is not None:
+            # M15 fix: cache the parse result for reuse in compress()
+            self._cached_parse = parsed
+            self._cached_content_id = id(envelope.content)
         return parsed is not None
 
     def compress(self, envelope: ContentEnvelope) -> ContentEnvelope:
         """Convert uniform JSON array to tab-separated columnar format."""
-        parsed = self._try_parse_uniform_array(envelope.content)
+        # M15 fix: use cached parse from can_handle() if available
+        if (
+            self._cached_parse is not None
+            and self._cached_content_id == id(envelope.content)
+        ):
+            parsed = self._cached_parse
+            self._cached_parse = None
+            self._cached_content_id = None
+        else:
+            parsed = self._try_parse_uniform_array(envelope.content)
         if parsed is None:
             return envelope
 

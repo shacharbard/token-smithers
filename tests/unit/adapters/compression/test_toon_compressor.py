@@ -214,3 +214,40 @@ class TestToonCompressorSpecific:
             )
         # Verify the pipe character is preserved in the value
         assert "echo foo | grep bar" in lines[1]
+
+
+class TestToonCompressorParseCache:
+    """M15: can_handle() parse result should be cached for compress()."""
+
+    def test_no_double_parse(self) -> None:
+        """compress() should reuse can_handle()'s parse result."""
+        from unittest.mock import patch
+
+        from token_sieve.adapters.compression.toon_compressor import ToonCompressor
+
+        compressor = ToonCompressor()
+        content = json.dumps([{"a": 1, "b": 2}, {"a": 3, "b": 4}])
+        envelope = ContentEnvelope(
+            content=content,
+            content_type=ContentType.TEXT,
+        )
+
+        # Call can_handle, which should cache the parse
+        assert compressor.can_handle(envelope) is True
+
+        # Patch _try_parse to count calls during compress
+        original = compressor._try_parse_uniform_array
+        call_count = [0]
+
+        def counting_parse(text):
+            call_count[0] += 1
+            return original(text)
+
+        with patch.object(compressor, "_try_parse_uniform_array", side_effect=counting_parse):
+            compressor.compress(envelope)
+
+        # If cached, _try_parse should not be called again in compress()
+        assert call_count[0] == 0, (
+            f"_try_parse called {call_count[0]} times during compress — "
+            "parse result not cached from can_handle()"
+        )

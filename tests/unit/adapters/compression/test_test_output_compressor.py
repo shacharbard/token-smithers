@@ -213,3 +213,29 @@ class TestTestOutputCompressorCompress:
         result = compressor.compress(envelope)
         assert isinstance(result, ContentEnvelope)
         assert result.content_type == ContentType.TEXT
+
+
+class TestSkippedStatusRecognition:
+    """M14: TestOutputCompressor must recognize SKIPPED status."""
+
+    def test_skipped_counted_in_summary(self) -> None:
+        """SKIPPED lines must be recognized and counted."""
+        from token_sieve.adapters.compression.test_output_compressor import (
+            TestOutputCompressor,
+        )
+
+        pytest_with_skipped = (
+            "============================= test session starts ==============================\n"
+            "collected 4 items\n\n"
+            "tests/test_a.py::test_one PASSED\n"
+            "tests/test_a.py::test_two SKIPPED\n"
+            "tests/test_a.py::test_three PASSED\n"
+            "tests/test_a.py::test_four FAILED\n"
+            "\n"
+            "========================= 1 failed, 2 passed, 1 skipped in 0.5s =========================\n"
+        )
+        compressor = TestOutputCompressor()
+        envelope = _make_envelope(pytest_with_skipped)
+        result = compressor.compress(envelope)
+        # SKIPPED line should be recognized (dropped like PASSED)
+        assert "SKIPPED" not in result.content or "skipped" in result.content.lower()

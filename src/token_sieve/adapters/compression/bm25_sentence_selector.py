@@ -49,6 +49,9 @@ class BM25SentenceSelector:
         min_sentences: Minimum sentences to keep regardless of ratio.
     """
 
+    # H9 fix: upper bound on input sentences to prevent O(n*m) memory explosion
+    _MAX_SENTENCES: int = 2000
+
     def __init__(
         self,
         *,
@@ -69,6 +72,9 @@ class BM25SentenceSelector:
     def compress(self, envelope: ContentEnvelope) -> ContentEnvelope:
         """Compress by selecting top-K sentences ranked by BM25 relevance."""
         sentences = _split_sentences(envelope.content)
+        # H9 fix: cap input to _MAX_SENTENCES to prevent unbounded memory
+        if len(sentences) > self._MAX_SENTENCES:
+            sentences = sentences[: self._MAX_SENTENCES]
         if len(sentences) <= self._min_sentences:
             return envelope
 
@@ -84,9 +90,9 @@ class BM25SentenceSelector:
         top_k_indices.sort()
 
         selected = [sentences[i] for i in top_k_indices]
-        compressed = ". ".join(selected)
-        if not compressed.endswith("."):
-            compressed += "."
+        # M13 fix: use space join — sentences already retain trailing punctuation
+        # from the split. Using ". ".join() would produce "sentence!. next".
+        compressed = " ".join(selected)
 
         original_count = len(sentences)
         kept_count = len(selected)

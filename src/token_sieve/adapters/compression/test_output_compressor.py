@@ -21,8 +21,9 @@ from token_sieve.domain.model import ContentEnvelope, ContentType
 _PYTEST_HEADER_RE = re.compile(r"={3,}\s*test session starts\s*={3,}")
 
 # pytest individual test result: path::Class::method STATUS
+# M14 fix: include SKIPPED status to track skipped test count
 _PYTEST_RESULT_RE = re.compile(
-    r"^(.*?::.*?)\s+(PASSED|FAILED|ERROR|XFAIL|XPASS)\s*$"
+    r"^(.*?::.*?)\s+(PASSED|FAILED|ERROR|XFAIL|XPASS|SKIPPED)\s*$"
 )
 
 # pytest summary footer: === N passed, M failed in X.XXs ===
@@ -128,9 +129,9 @@ class TestOutputCompressor:
             m = _PYTEST_RESULT_RE.match(stripped)
             if m:
                 status = m.group(2)
-                if status == "PASSED":
+                if status in ("PASSED", "SKIPPED"):
                     passed_count += 1
-                    continue  # Drop PASSED lines
+                    continue  # Drop PASSED/SKIPPED lines
                 else:
                     kept_lines.append(line)
                     continue

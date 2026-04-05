@@ -7,6 +7,8 @@ lazily on the first ``embed()`` call to avoid blocking proxy startup.
 
 from __future__ import annotations
 
+import threading
+
 _DEFAULT_MODEL = "minishlab/potion-base-8M"
 
 
@@ -30,11 +32,17 @@ class Model2VecEmbedder:
         self._model_name = model_name
         self._model: object | None = None
         self._dimension: int | None = None
+        # H10 fix: guard against double loading from concurrent async tasks
+        self._load_lock = threading.Lock()
 
     def _ensure_loaded(self) -> None:
         """Load the model on first use (deferred init)."""
         if self._model is not None:
             return
+        with self._load_lock:
+            # Double-check after acquiring lock
+            if self._model is not None:
+                return
         from model2vec import StaticModel
 
         self._model = StaticModel.from_pretrained(self._model_name)

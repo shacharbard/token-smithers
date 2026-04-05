@@ -146,3 +146,40 @@ class TestBM25SentenceSelectorWithBM25:
         assert "test" in content_lower or "pytest" in content_lower
         # Food-related sentences should be dropped
         assert "risotto" not in content_lower or "pasta" not in content_lower
+
+
+@pytest.mark.skipif(not _RANK_BM25_AVAILABLE, reason="rank_bm25 not installed")
+class TestBM25MaxSentencesCap:
+    """H9: BM25SentenceSelector must cap input at max_sentences."""
+
+    def test_large_input_capped(self) -> None:
+        """Input with >2000 sentences should be capped."""
+        from token_sieve.adapters.compression.bm25_sentence_selector import (
+            BM25SentenceSelector,
+        )
+
+        # Create 3000 sentences
+        huge_text = ". ".join(f"Sentence number {i}" for i in range(3000)) + "."
+        selector = BM25SentenceSelector(threshold_tokens=100)
+        envelope = _make_envelope(huge_text, source_tool="test")
+        # Should not hang or OOM — must complete in reasonable time
+        result = selector.compress(envelope)
+        assert isinstance(result, ContentEnvelope)
+
+
+class TestBM25JoinFix:
+    """M13: BM25 must use space join, not '. ' (sentences already have punctuation)."""
+
+    def test_no_double_punctuation(self) -> None:
+        """Joined output must not have double punctuation like 'sentence!. next'."""
+        from token_sieve.adapters.compression.bm25_sentence_selector import (
+            BM25SentenceSelector,
+        )
+
+        text = "First sentence! Second sentence? Third sentence. Fourth sentence."
+        selector = BM25SentenceSelector(threshold_tokens=0, keep_ratio=0.5, min_sentences=2)
+        envelope = _make_envelope(text, source_tool="test")
+        result = selector.compress(envelope)
+        # Should not have patterns like "!. " or "?. "
+        assert "!. " not in result.content
+        assert "?. " not in result.content
