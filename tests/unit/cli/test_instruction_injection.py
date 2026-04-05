@@ -299,3 +299,94 @@ class TestSessionRecording:
 
             assert exit_code == 0
             mock_proxy.run.assert_awaited_once()
+
+
+class TestFullStartupSequence:
+    """End-to-end smoke tests for the startup path."""
+
+    def test_full_startup_sequence(self, tmp_path: Path) -> None:
+        """Full startup: session recorded, instruction hint injected."""
+        config_file = _make_config_file(tmp_path, visibility_enabled=True)
+
+        # 20 tools, 8 have usage data, floor=5
+        tools = [_make_tool(f"tool_{i}") for i in range(20)]
+        usage_stats = [
+            ToolUsageRecord(
+                tool_name=f"tool_{i}",
+                server_id="default",
+                call_count=10,
+                last_called_at="2026-01-01",
+            )
+            for i in range(8)
+        ]
+
+        with (
+            patch(
+                "token_sieve.adapters.backend.stdio_transport.StdioClientTransport"
+            ) as mock_transport_cls,
+            patch(
+                "token_sieve.adapters.backend.connector.BackendConnector"
+            ) as mock_connector_cls,
+            patch(
+                "token_sieve.server.proxy.ProxyServer.create_from_config"
+            ) as mock_create,
+        ):
+            mock_connector, mock_proxy, mock_ls = _setup_mocks(
+                mock_transport_cls, mock_connector_cls, tools=tools
+            )
+            mock_ls.get_usage_stats.return_value = usage_stats
+            mock_ls.get_session_count.return_value = 10
+            mock_create.return_value = mock_proxy
+
+            from token_sieve.cli.main import _run_proxy
+
+            exit_code = asyncio.run(_run_proxy(str(config_file)))
+
+            assert exit_code == 0
+            # Session was recorded
+            mock_ls.record_session.assert_awaited_once_with("test-session-123")
+            # Instruction hint was injected with correct hidden count
+            # 8 tools have usage -> visible, 12 don't -> hidden
+            # But min_visible_floor=5, and we have 8 visible already, so 12 hidden
+            hint_calls = [
+                c for c in mock_connector.set_instructions.call_args_list
+                if "discover_tools" in c[0][0]
+            ]
+            assert len(hint_calls) == 1
+            hint_text = hint_calls[0][0][0]
+            assert "12" in hint_text  # 12 hidden tools
+            # Proxy ran
+            mock_proxy.run.assert_awaited_once()
+
+    def test_startup_without_visibility_config(self, tmp_path: Path) -> None:
+        """With visibility disabled, no injection or session recording."""
+        config_file = _make_config_file(tmp_path, visibility_enabled=False)
+
+        with (
+            patch(
+                "token_sieve.adapters.backend.stdio_transport.StdioClientTransport"
+            ) as mock_transport_cls,
+            patch(
+                "token_sieve.adapters.backend.connector.BackendConnector"
+            ) as mock_connector_cls,
+            patch(
+                "token_sieve.server.proxy.ProxyServer.create_from_config"
+            ) as mock_create,
+        ):
+            mock_connector, mock_proxy, mock_ls = _setup_mocks(
+                mock_transport_cls, mock_connector_cls
+            )
+            mock_create.return_value = mock_proxy
+
+            from token_sieve.cli.main import _run_proxy
+
+            exit_code = asyncio.run(_run_proxy(str(config_file)))
+
+            assert exit_code == 0
+            # No session recording
+            mock_ls.record_session.assert_not_awaited()
+            # No instruction injection
+            for call in mock_connector.set_instructions.call_args_list:
+                assert "discover_tools" not in call[0][0]
+            # Proxy still starts
+            mock_proxy.run.assert_awaited_once()

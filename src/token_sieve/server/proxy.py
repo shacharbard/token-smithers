@@ -447,6 +447,89 @@ class ProxyServer:
             f"Consider /compact.]"
         )
 
+    async def _dispatch_synthetic(
+        self, name: str, arguments: dict[str, Any]
+    ) -> types.CallToolResult:
+        """Route synthetic tool calls to their handlers."""
+        if name == "discover_tools":
+            return await self._handle_discover_tools(arguments)
+        if name == "explain_compression":
+            return await self._handle_explain_compression(arguments)
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text=f"Unknown synthetic tool: {name}")],
+            isError=True,
+        )
+
+    async def _handle_discover_tools(
+        self, arguments: dict[str, Any]
+    ) -> types.CallToolResult:
+        """Search hidden tools by keyword, return summaries, auto-unhide matches."""
+        query = (arguments.get("query") or "").lower()
+        if self._visibility_controller is None:
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text="No hidden tools (visibility not enabled)")],
+                isError=False,
+            )
+
+        hidden = self._visibility_controller.get_hidden_tools()
+        if not hidden:
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text="No hidden tools available.")],
+                isError=False,
+            )
+
+        # Search by keyword match on name + description
+        matches = []
+        for tool in hidden:
+            name_match = query in tool.name.lower()
+            desc_match = query in (tool.description or "").lower()
+            if not query or name_match or desc_match:
+                matches.append(tool)
+
+        matches = matches[:5]  # Top-5 results
+
+        if not matches:
+            return types.CallToolResult(
+                content=[types.TextContent(
+                    type="text",
+                    text=f"No hidden tools matching '{query}'. {len(hidden)} tools remain hidden.",
+                )],
+                isError=False,
+            )
+
+        # Format as DietMCP summaries
+        lines = [f"Found {len(matches)} hidden tool(s) matching '{query}':\n"]
+        for tool in matches:
+            # DietMCP-style: tool_name(params) description
+            schema = tool.inputSchema or {}
+            props = schema.get("properties", {})
+            required = set(schema.get("required", []))
+            params = []
+            for p_name in props:
+                params.append(p_name if p_name in required else f"?{p_name}")
+            param_str = ", ".join(params)
+            desc = (tool.description or "").split(".")[0]
+            lines.append(f"  {tool.name}({param_str}) {desc}")
+
+            # Auto-unhide matched tools
+            self._visibility_controller.unhide_for_session(tool.name)
+
+        lines.append(f"\nThese {len(matches)} tool(s) are now visible for this session.")
+
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text="\n".join(lines))],
+            isError=False,
+        )
+
+    async def _handle_explain_compression(
+        self, arguments: dict[str, Any]
+    ) -> types.CallToolResult:
+        """Return per-adapter compression breakdown. Stub for Task 3."""
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text="No compression data available yet.")],
+            isError=False,
+        )
+
     async def handle_call_tool(
         self, name: str, arguments: dict[str, Any]
     ) -> types.CallToolResult:
@@ -461,6 +544,10 @@ class ProxyServer:
         7. Cache result and record usage
         8. Trigger invalidation for mutating calls
         """
+        # Synthetic tools: dispatch BEFORE filter gate (bypass ToolFilter)
+        if name in self._SYNTHETIC_TOOLS:
+            return await self._dispatch_synthetic(name, arguments)
+
         # Gate: blocked tools
         if not self._filter.is_allowed(name):
             return types.CallToolResult(

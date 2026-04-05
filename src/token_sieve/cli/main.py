@@ -164,44 +164,58 @@ async def _run_proxy(config_path: str | None = None) -> int:
 
         # Session recording and instruction injection for tool visibility
         if config.tool_visibility.enabled and proxy._learning_store is not None:
-            # Record session for cold-start tracking
-            try:
-                await proxy._learning_store.record_session(proxy._session_id)
-            except Exception:
-                logger.debug("Session recording failed, continuing")
-
-            # Eager visibility pre-computation: inject hint if tools are hidden
-            try:
-                from token_sieve.adapters.visibility.visibility_controller import (
-                    VisibilityController,
-                )
-
-                raw_tools = await connector.list_tools()
-                usage_stats = await proxy._learning_store.get_usage_stats("default")
-                session_count = await proxy._learning_store.get_session_count()
-
-                vc = VisibilityController(
-                    frequency_threshold=config.tool_visibility.frequency_threshold,
-                    min_visible_floor=config.tool_visibility.min_visible_floor,
-                    cold_start_sessions=config.tool_visibility.cold_start_sessions,
-                )
-                _visible, hidden = vc.apply(
-                    raw_tools, usage_stats, session_count=session_count
-                )
-
-                if hidden:
-                    hidden_count = len(hidden)
-                    hint = (
-                        f"\n\n[token-sieve] {hidden_count} tool(s) are hidden based on usage. "
-                        f"Use discover_tools to reveal them."
-                    )
-                    existing = connector.get_instructions() or ""
-                    connector.set_instructions(existing + hint)
-            except Exception:
-                logger.debug("Visibility instruction injection failed, continuing")
+            await _inject_visibility_instructions(proxy, connector, config)
 
         await proxy.run()
     return 0
+
+
+async def _inject_visibility_instructions(
+    proxy: object, connector: object, config: object
+) -> None:
+    """Record session and inject visibility hint into connector instructions.
+
+    Gracefully handles all errors -- proxy startup must never be blocked
+    by failures in session recording or visibility pre-computation.
+    """
+    learning_store = proxy._learning_store  # type: ignore[attr-defined]
+    session_id = proxy._session_id  # type: ignore[attr-defined]
+
+    # Record session for cold-start tracking
+    try:
+        await learning_store.record_session(session_id)
+    except Exception:
+        logger.debug("Session recording failed, continuing")
+
+    # Eager visibility pre-computation: inject hint if tools are hidden
+    try:
+        from token_sieve.adapters.visibility.visibility_controller import (
+            VisibilityController,
+        )
+
+        raw_tools = await connector.list_tools()  # type: ignore[attr-defined]
+        usage_stats = await learning_store.get_usage_stats("default")
+        session_count = await learning_store.get_session_count()
+
+        vc = VisibilityController(
+            frequency_threshold=config.tool_visibility.frequency_threshold,  # type: ignore[attr-defined]
+            min_visible_floor=config.tool_visibility.min_visible_floor,  # type: ignore[attr-defined]
+            cold_start_sessions=config.tool_visibility.cold_start_sessions,  # type: ignore[attr-defined]
+        )
+        _visible, hidden = vc.apply(
+            raw_tools, usage_stats, session_count=session_count
+        )
+
+        if hidden:
+            hidden_count = len(hidden)
+            hint = (
+                f"\n\n[token-sieve] {hidden_count} tool(s) are hidden based on usage. "
+                f"Use discover_tools to reveal them."
+            )
+            existing = connector.get_instructions() or ""  # type: ignore[attr-defined]
+            connector.set_instructions(existing + hint)  # type: ignore[attr-defined]
+    except Exception:
+        logger.debug("Visibility instruction injection failed, continuing")
 
 
 def _run_stats(full: bool = False) -> int:
