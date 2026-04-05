@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections import OrderedDict
 from typing import Any
 
 import mcp.server.stdio
@@ -105,6 +106,8 @@ class ProxyServer:
         self._compaction_warning_threshold: int = 80000
         self._visibility_controller = visibility_controller
         self._discover_tools_threshold: int = 5
+        self._last_compression_events: OrderedDict[str, list[Any]] = OrderedDict()
+        self._last_called_tool: str | None = None
         self._server = self._build_mcp_server()
 
     def rebind_connector(self, connector: Any) -> None:
@@ -524,9 +527,53 @@ class ProxyServer:
     async def _handle_explain_compression(
         self, arguments: dict[str, Any]
     ) -> types.CallToolResult:
-        """Return per-adapter compression breakdown. Stub for Task 3."""
+        """Return per-adapter compression breakdown for a tool."""
+        tool_name = arguments.get("tool_name") or self._last_called_tool
+        if not tool_name:
+            return types.CallToolResult(
+                content=[types.TextContent(
+                    type="text",
+                    text="No compression data available yet. Call a tool first.",
+                )],
+                isError=False,
+            )
+
+        events = self._last_compression_events.get(tool_name)
+        if not events:
+            return types.CallToolResult(
+                content=[types.TextContent(
+                    type="text",
+                    text=f"No compression data for '{tool_name}'.",
+                )],
+                isError=False,
+            )
+
+        lines = [f"Compression breakdown for '{tool_name}':\n"]
+        for event in events:
+            original = event.original_tokens
+            compressed = event.compressed_tokens
+            saved = original - compressed
+            ratio = (saved / original * 100) if original > 0 else 0
+            lines.append(
+                f"  {event.strategy_name}: "
+                f"{original} -> {compressed} tokens "
+                f"(saved {saved}, {ratio:.0f}%)"
+            )
+
+        total_original = events[0].original_tokens if events else 0
+        applied = [e for e in events if not e.is_regret]
+        total_compressed = applied[-1].compressed_tokens if applied else (
+            events[-1].compressed_tokens if events else 0
+        )
+        total_saved = total_original - total_compressed
+        total_ratio = (total_saved / total_original * 100) if total_original > 0 else 0
+        lines.append(
+            f"\nTotal: {total_original} -> {total_compressed} tokens "
+            f"(saved {total_saved}, {total_ratio:.0f}%)"
+        )
+
         return types.CallToolResult(
-            content=[types.TextContent(type="text", text="No compression data available yet.")],
+            content=[types.TextContent(type="text", text="\n".join(lines))],
             isError=False,
         )
 
@@ -689,6 +736,48 @@ class ProxyServer:
         elif self._metrics_collector is not None:
             for event in events_for_learning:
                 self._metrics_collector.record(event)
+
+        # Track compression events for explain_compression
+        if events_for_learning:
+            self._last_compression_events[name] = list(events_for_learning)
+            # Evict oldest entries when exceeding 50
+            while len(self._last_compression_events) > 50:
+                self._last_compression_events.popitem(last=False)
+        self._last_called_tool = name
+
+        # Related tools surfacing: append co-occurrence footer for hidden tools
+        if (
+            self._visibility_controller is not None
+            and self._learning_store is not None
+            and name in self._visibility_controller.get_hidden_tool_names()
+        ):
+            try:
+                cooccurrences = await self._learning_store.get_cooccurrence(name)
+                if cooccurrences:
+                    related_names = []
+                    for co in cooccurrences[:3]:
+                        other = co.tool_b if co.tool_a == name else co.tool_a
+                        related_names.append(f"{other} ({co.co_count}x)")
+                    footer = (
+                        f"\n[Token Smithers] Related tools also hidden: "
+                        + ", ".join(related_names)
+                        + ". Use discover_tools to find them."
+                    )
+                    # Append footer to last text content
+                    if final_result.content:
+                        last = final_result.content[-1]
+                        if isinstance(last, types.TextContent):
+                            final_result = types.CallToolResult(
+                                content=[
+                                    *final_result.content[:-1],
+                                    types.TextContent(
+                                        type="text", text=last.text + footer
+                                    ),
+                                ],
+                                isError=final_result.isError,
+                            )
+            except Exception:
+                pass  # Graceful degradation
 
         # Trigger invalidation for mutating calls
         if self._invalidator is not None and self._invalidator.is_mutating(name):
