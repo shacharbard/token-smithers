@@ -371,3 +371,137 @@ class TestBatchMethodOnProtocol:
         from token_sieve.domain.ports_learning import LearningStore
 
         assert hasattr(LearningStore, "record_compression_events_batch")
+
+
+# ---------------------------------------------------------------------------
+# Phase 08 adversarial review fixes
+# ---------------------------------------------------------------------------
+
+
+class TestH6MigrationV4NoDuplicateTableCreation:
+    """H6: Migration v4 should not duplicate table creation from _SCHEMA_SQL."""
+
+    @pytest.fixture()
+    async def store(self):
+        from token_sieve.adapters.learning.sqlite_store import SQLiteLearningStore
+
+        return await SQLiteLearningStore.connect(":memory:")
+
+    @pytest.mark.asyncio
+    async def test_migration_v4_does_not_recreate_tables(self, store) -> None:
+        """Migration v4 should just bump version, not re-CREATE tables."""
+        import token_sieve.adapters.learning.sqlite_store as mod
+
+        # Check that migration v4 block in connect() doesn't contain
+        # CREATE TABLE statements (they should only be in _SCHEMA_SQL)
+        import inspect
+        source = inspect.getsource(mod.SQLiteLearningStore.connect)
+        # Count CREATE TABLE in the migration v4 block
+        # If v4 migration still has CREATE TABLE, that's the bug
+        lines = source.split("\n")
+        in_v4 = False
+        v4_create_count = 0
+        for line in lines:
+            if "Migration v4" in line or "current_version < 4" in line:
+                in_v4 = True
+            elif in_v4 and ("Migration v5" in line or "current_version < 5" in line):
+                in_v4 = False
+            elif in_v4 and "CREATE TABLE" in line:
+                v4_create_count += 1
+        assert v4_create_count == 0, (
+            f"H6: Migration v4 has {v4_create_count} CREATE TABLE statements. "
+            f"Tables should only be created in _SCHEMA_SQL."
+        )
+
+
+class TestM5ForeignKeyOnToolUsageSessions:
+    """M5: tool_usage_sessions.session_id must have FK to sessions."""
+
+    @pytest.fixture()
+    async def store(self):
+        from token_sieve.adapters.learning.sqlite_store import SQLiteLearningStore
+
+        return await SQLiteLearningStore.connect(":memory:")
+
+    @pytest.mark.asyncio
+    async def test_foreign_key_constraint_declared_in_schema(self, store) -> None:
+        """tool_usage_sessions DDL should reference sessions(session_id)."""
+        # Check schema SQL for FK declaration
+        async with store._db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='tool_usage_sessions'"
+        ) as cursor:
+            row = await cursor.fetchone()
+            assert row is not None
+            ddl = row[0]
+            assert "REFERENCES" in ddl and "sessions" in ddl, (
+                f"M5: FK constraint on session_id is missing. DDL: {ddl}"
+            )
+
+
+class TestM6LastNValidation:
+    """M6: get_tool_usage_in_recent_sessions must guard against last_n <= 0."""
+
+    @pytest.fixture()
+    async def store(self):
+        from token_sieve.adapters.learning.sqlite_store import SQLiteLearningStore
+
+        return await SQLiteLearningStore.connect(":memory:")
+
+    @pytest.mark.asyncio
+    async def test_negative_last_n_returns_zero(self, store) -> None:
+        """Negative last_n should return 0 immediately, not scan all."""
+        result = await store.get_tool_usage_in_recent_sessions("tool_a", -1)
+        assert result == 0
+
+    @pytest.mark.asyncio
+    async def test_zero_last_n_returns_zero(self, store) -> None:
+        """Zero last_n should return 0 immediately."""
+        result = await store.get_tool_usage_in_recent_sessions("tool_a", 0)
+        assert result == 0
+
+
+class TestM8NoDoubleCommitInRecordToolSessionCall:
+    """M8: record_tool_session_call should not commit before record_call."""
+
+    @pytest.fixture()
+    async def store(self):
+        from token_sieve.adapters.learning.sqlite_store import SQLiteLearningStore
+
+        return await SQLiteLearningStore.connect(":memory:")
+
+    @pytest.mark.asyncio
+    async def test_single_commit_in_record_tool_session_call(self, store) -> None:
+        """record_tool_session_call should let record_call handle commit."""
+        import inspect
+        import token_sieve.adapters.learning.sqlite_store as mod
+
+        source = inspect.getsource(mod.SQLiteLearningStore.record_tool_session_call)
+        # Should not have its own commit; record_call handles it
+        commit_count = source.count("await self._db.commit()")
+        assert commit_count == 0, (
+            f"M8: record_tool_session_call has {commit_count} commit(s). "
+            f"Should delegate commit to record_call."
+        )
+
+
+class TestM9IndexOnSessionsStartedAt:
+    """M9: sessions.started_at should have an index for ORDER BY performance."""
+
+    @pytest.fixture()
+    async def store(self):
+        from token_sieve.adapters.learning.sqlite_store import SQLiteLearningStore
+
+        return await SQLiteLearningStore.connect(":memory:")
+
+    @pytest.mark.asyncio
+    async def test_index_exists_on_sessions_started_at(self, store) -> None:
+        """An index should exist on sessions.started_at."""
+        async with store._db.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='sessions'"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            index_names = [row[0] for row in rows]
+
+        assert any("started_at" in name for name in index_names), (
+            f"M9: No index on sessions.started_at. Indexes: {index_names}"
+        )

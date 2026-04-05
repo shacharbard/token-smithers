@@ -77,13 +77,15 @@ CREATE TABLE IF NOT EXISTS sessions (
     session_id TEXT PRIMARY KEY,
     started_at TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at);
 
 CREATE TABLE IF NOT EXISTS tool_usage_sessions (
     tool_name TEXT NOT NULL,
     session_id TEXT NOT NULL,
     call_count INTEGER DEFAULT 0,
     created_at TEXT NOT NULL,
-    PRIMARY KEY (tool_name, session_id)
+    PRIMARY KEY (tool_name, session_id),
+    FOREIGN KEY (session_id) REFERENCES sessions(session_id)
 );
 """
 
@@ -195,24 +197,10 @@ class SQLiteLearningStore:
             await db.commit()
 
         # --- Migration v4: sessions + tool_usage_sessions tables ---
+        # H6 fix: Tables are already created by _SCHEMA_SQL. Migration only
+        # bumps version for existing databases (idempotent DDL in _SCHEMA_SQL
+        # handles both fresh and migrated DBs).
         if current_version < 4:
-            await db.execute(
-                """\
-                CREATE TABLE IF NOT EXISTS sessions (
-                    session_id TEXT PRIMARY KEY,
-                    started_at TEXT NOT NULL
-                )"""
-            )
-            await db.execute(
-                """\
-                CREATE TABLE IF NOT EXISTS tool_usage_sessions (
-                    tool_name TEXT NOT NULL,
-                    session_id TEXT NOT NULL,
-                    call_count INTEGER DEFAULT 0,
-                    created_at TEXT NOT NULL,
-                    PRIMARY KEY (tool_name, session_id)
-                )"""
-            )
             now = datetime.now(timezone.utc).isoformat()
             await db.execute(
                 "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
@@ -753,14 +741,16 @@ class SQLiteLearningStore:
             "call_count = call_count + 1",
             (tool_name, session_id, now),
         )
-        await self._db.commit()
-        # Maintain backward compat with cumulative tool_usage table
+        # M8 fix: no intermediate commit; record_call handles single commit
         await self.record_call(tool_name, server_id)
 
     async def get_tool_usage_in_recent_sessions(
         self, tool_name: str, last_n: int
     ) -> int:
         """Return total call count for tool across last N sessions."""
+        # M6 fix: guard against non-positive last_n
+        if last_n <= 0:
+            return 0
         async with self._db.execute(
             "SELECT COALESCE(SUM(tus.call_count), 0) "
             "FROM tool_usage_sessions tus "
