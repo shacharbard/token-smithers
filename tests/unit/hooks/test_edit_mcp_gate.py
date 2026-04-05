@@ -26,6 +26,9 @@ def state_dir(tmp_path):
     return tmp_path
 
 
+_TEST_SESSION_ID = "test-session"
+
+
 def run_hook(tool_input: dict, state_dir: str, cwd: str | None = None) -> subprocess.CompletedProcess:
     """Run the edit-mcp-gate hook with given tool input."""
     payload = json.dumps({"tool_input": tool_input, "cwd": cwd or "/fake/project"})
@@ -34,6 +37,7 @@ def run_hook(tool_input: dict, state_dir: str, cwd: str | None = None) -> subpro
         "TOKEN_SIEVE_MCP_STATE_DIR": str(state_dir),
         # Simulate jCodeMunch being available
         "TOKEN_SIEVE_HAS_JCODEMUNCH": "1",
+        "CLAUDE_SESSION_ID": _TEST_SESSION_ID,
     }
     return subprocess.run(
         ["bash", HOOK_PATH],
@@ -47,7 +51,7 @@ def run_hook(tool_input: dict, state_dir: str, cwd: str | None = None) -> subpro
 
 def record_mcp_read(state_dir: str, file_path: str) -> None:
     """Simulate a jCodeMunch read by writing to the state file."""
-    state_file = os.path.join(state_dir, "jcodemunch-reads")
+    state_file = os.path.join(state_dir, f"jcodemunch-reads-{_TEST_SESSION_ID}")
     with open(state_file, "a") as f:
         f.write(file_path + "\n")
 
@@ -171,3 +175,65 @@ class TestEditMcpGate:
         )
         assert result.returncode == 2
         assert "get_symbol" in result.stderr or "get_file_content" in result.stderr
+
+
+class TestStateFileScoping:
+    """H6: State file must be scoped per session."""
+
+    def test_state_file_uses_session_id(self, state_dir):
+        """State file should include session ID in the filename."""
+        env_override = {
+            **os.environ,
+            "TOKEN_SIEVE_MCP_STATE_DIR": str(state_dir),
+            "TOKEN_SIEVE_HAS_JCODEMUNCH": "1",
+            "CLAUDE_SESSION_ID": "test-session-123",
+        }
+        # Run the tracker to create a state file
+        tracker_path = os.path.normpath(os.path.join(
+            os.path.dirname(__file__),
+            "..", "..", "..", "src", "token_sieve", "hooks", "mcp-read-tracker.sh",
+        ))
+        payload = json.dumps({
+            "tool_input": {"file_path": "/project/src/main.py"},
+        })
+        subprocess.run(
+            ["bash", tracker_path],
+            input=payload,
+            capture_output=True,
+            text=True,
+            env=env_override,
+            timeout=5,
+        )
+        # State file should be session-scoped
+        state_files = list(state_dir.iterdir()) if hasattr(state_dir, 'iterdir') else os.listdir(state_dir)
+        filenames = [os.path.basename(str(f)) for f in state_files]
+        assert any(
+            "test-session-123" in name for name in filenames
+        ), f"No session-scoped state file found. Files: {filenames}"
+
+
+class TestEditGateMatchPrecision:
+    """H7+H8: Edit gate matching must be precise but allow directory prefix."""
+
+    def test_prefix_match_does_not_unlock_different_file(self, state_dir):
+        """H7: Recording /foo/bar.py must NOT unlock /foo/bar_copy.py."""
+        record_mcp_read(state_dir, "/project/src/app/main.py")
+
+        result = run_hook(
+            {"file_path": "/project/src/app/main_copy.py", "old_string": "x", "new_string": "y"},
+            state_dir,
+        )
+        # main_copy.py should NOT be unlocked by reading main.py (substring match)
+        assert result.returncode == 2, "Substring match allowed bypass — H7 not fixed"
+
+    def test_directory_read_unlocks_files_underneath(self, state_dir):
+        """H8: Recording a directory path should unlock files under it."""
+        # search_symbols records the repo path (directory), not individual files
+        record_mcp_read(state_dir, "/project/src")
+
+        result = run_hook(
+            {"file_path": "/project/src/app/main.py", "old_string": "x", "new_string": "y"},
+            state_dir,
+        )
+        # Directory prefix should unlock files underneath
+        assert result.returncode == 0, "Directory prefix match failed — H8 not handled"

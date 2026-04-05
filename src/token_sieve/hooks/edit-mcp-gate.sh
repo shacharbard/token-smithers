@@ -94,11 +94,30 @@ print('yes' if 'old_string' in d.get('tool_input', {}) else 'no')
 fi
 
 # Check state file for prior jCodeMunch read
+# H6 fix: scope state file per session using CLAUDE_SESSION_ID
 STATE_DIR="${TOKEN_SIEVE_MCP_STATE_DIR:-/tmp}"
-STATE_FILE="$STATE_DIR/jcodemunch-reads"
+SESSION_ID="${CLAUDE_SESSION_ID:-default}"
+STATE_FILE="$STATE_DIR/jcodemunch-reads-${SESSION_ID}"
 
-if [ -f "$STATE_FILE" ] && grep -qF "$FILE_PATH" "$STATE_FILE" 2>/dev/null; then
-  exit 0
+if [ -f "$STATE_FILE" ]; then
+  # H7 fix: use grep -qxF (exact full-line match) to prevent suffix bypass.
+  # E.g., recording /foo/bar.py must NOT unlock /foo/bar.py.bak.
+  if grep -qxF "$FILE_PATH" "$STATE_FILE" 2>/dev/null; then
+    exit 0
+  fi
+
+  # H8 design: For search_symbols, the tracker records the repo path (a
+  # directory), not individual files. We intentionally allow prefix matching
+  # for directory paths — a directory read unlocks all files under it.
+  # This uses grep -qF (substring match) but only against the file path's
+  # directory components, not the full line.
+  DIR_PATH=$(dirname "$FILE_PATH")
+  while [ "$DIR_PATH" != "/" ] && [ "$DIR_PATH" != "." ]; do
+    if grep -qxF "$DIR_PATH" "$STATE_FILE" 2>/dev/null; then
+      exit 0
+    fi
+    DIR_PATH=$(dirname "$DIR_PATH")
+  done
 fi
 
 # Block with actionable message
