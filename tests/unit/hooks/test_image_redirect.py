@@ -80,6 +80,28 @@ class TestImageRedirectHook:
         )
         assert result.exit_code == 0
 
+    def test_single_quote_in_path_escaped(self, run_hook, tmp_path):
+        """C3: File paths with single quotes must be properly escaped in sips suggestion."""
+        # Create a dir with a safe name, then a file with single quote
+        img = tmp_path / "it's a file.png"
+        img.write_bytes(b"\x00" * (600 * 1024))
+
+        result = run_hook(
+            "image-redirect.sh",
+            {"file_path": str(img)},
+        )
+        assert result.exit_code == 2
+        # The suggestion must NOT have unescaped single quotes that break
+        # the quoting context. Either use printf %q or double-quote the path.
+        stderr = result.stderr
+        # The path should be safely quoted — not raw inside single quotes
+        # A raw embedding like 'it's a file.png' would break the shell command
+        assert "it's a file" not in stderr or (
+            # If the path appears, it must be in double quotes or escaped
+            f'"{str(img)}"' in stderr
+            or str(img).replace("'", "'\\''") in stderr
+        )
+
     def test_completes_under_50ms(self, assert_completes_under_ms, tmp_path):
         """Hook completes in < 50ms."""
         img = tmp_path / "test.png"

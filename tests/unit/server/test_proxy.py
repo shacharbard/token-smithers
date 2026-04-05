@@ -1409,3 +1409,111 @@ class TestSchemaVirtualizationCaching:
 
         await proxy.handle_list_tools()
         assert virtualizer.virtualize.call_count == 2
+
+
+class TestSemanticCacheStripsFooter:
+    """C1: Semantic cache must NOT store the compression footer."""
+
+    @pytest.mark.anyio
+    async def test_cached_result_does_not_contain_footer(self) -> None:
+        """Compression footer must be stripped before caching."""
+        from token_sieve.server.proxy import ProxyServer
+
+        backend_text = "x " * 100  # 200 chars
+        compressed_text = "x " * 50  # 100 chars
+
+        connector = _make_fake_connector(
+            call_result=_make_call_result(backend_text),
+        )
+        pipeline = _make_fake_pipeline(
+            output_content=compressed_text,
+            events=[
+                CompressionEvent(
+                    original_tokens=200,
+                    compressed_tokens=100,
+                    strategy_name="TestStrategy",
+                    content_type=ContentType.TEXT,
+                ),
+            ],
+        )
+
+        semantic_cache = AsyncMock()
+        semantic_cache.lookup_similar = AsyncMock(return_value=None)
+        semantic_cache.cache_result = AsyncMock()
+        semantic_cache.evict_expired = AsyncMock()
+        semantic_cache.similarity_threshold = 0.85
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=_make_fake_filter(allowed=True),
+            pipeline=pipeline,
+            metrics_sink=_make_fake_sink(),
+            semantic_cache=semantic_cache,
+        )
+
+        result = await proxy.handle_call_tool("read_file", {"path": "/a"})
+
+        # The result returned to the user SHOULD have the footer
+        assert "Re-call for full detail" in result.content[0].text
+
+        # But the text stored in cache must NOT have the footer
+        semantic_cache.cache_result.assert_called_once()
+        cached_text = semantic_cache.cache_result.call_args[0][3]
+        assert "Re-call for full detail" not in cached_text
+        assert "Compressed:" not in cached_text
+
+
+class TestCacheableWordBoundary:
+    """C2: _is_cacheable must use word-boundary matching, not substring."""
+
+    def test_restart_service_not_cacheable(self) -> None:
+        """'restart_service' contains 'stat' but should NOT be cacheable."""
+        from token_sieve.server.proxy import ProxyServer
+
+        proxy = ProxyServer(
+            backend_connector=_make_fake_connector(),
+            tool_filter=_make_fake_filter(allowed=True),
+            pipeline=_make_fake_pipeline(),
+            metrics_sink=_make_fake_sink(),
+        )
+        assert proxy._is_cacheable("restart_service") is False
+
+    def test_blacklist_user_not_cacheable(self) -> None:
+        """'blacklist_user' contains 'list' but should NOT be cacheable."""
+        from token_sieve.server.proxy import ProxyServer
+
+        proxy = ProxyServer(
+            backend_connector=_make_fake_connector(),
+            tool_filter=_make_fake_filter(allowed=True),
+            pipeline=_make_fake_pipeline(),
+            metrics_sink=_make_fake_sink(),
+        )
+        assert proxy._is_cacheable("blacklist_user") is False
+
+    def test_budget_widget_not_cacheable(self) -> None:
+        """'budget_widget' contains 'get' but should NOT be cacheable."""
+        from token_sieve.server.proxy import ProxyServer
+
+        proxy = ProxyServer(
+            backend_connector=_make_fake_connector(),
+            tool_filter=_make_fake_filter(allowed=True),
+            pipeline=_make_fake_pipeline(),
+            metrics_sink=_make_fake_sink(),
+        )
+        assert proxy._is_cacheable("budget_widget") is False
+
+    def test_legitimate_tools_still_cacheable(self) -> None:
+        """Legitimate read-only tools must still be cacheable."""
+        from token_sieve.server.proxy import ProxyServer
+
+        proxy = ProxyServer(
+            backend_connector=_make_fake_connector(),
+            tool_filter=_make_fake_filter(allowed=True),
+            pipeline=_make_fake_pipeline(),
+            metrics_sink=_make_fake_sink(),
+        )
+        assert proxy._is_cacheable("read_file") is True
+        assert proxy._is_cacheable("get_symbol") is True
+        assert proxy._is_cacheable("list_tools") is True
+        assert proxy._is_cacheable("check_status") is True
+        assert proxy._is_cacheable("search_files") is True

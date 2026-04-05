@@ -96,10 +96,12 @@ class ProxyServer:
         """Check if a tool name matches known read-only patterns (allowlist).
 
         Returns True only if the tool name contains at least one cacheable
-        substring. Unknown tools default to NOT cacheable (safe-by-default).
+        word (split on '_'). Uses word-boundary matching instead of substring
+        to avoid false positives like 'blacklist_user' matching 'list'.
+        Unknown tools default to NOT cacheable (safe-by-default).
         """
-        lower = name.lower()
-        return any(pattern in lower for pattern in self._CACHEABLE_PATTERNS)
+        words = set(name.lower().split("_"))
+        return bool(words & self._CACHEABLE_PATTERNS)
 
     def _build_mcp_server(self) -> Server:
         """Create the low-level MCP Server with handlers wired to self."""
@@ -527,8 +529,11 @@ class ProxyServer:
             self._call_cache.put(name, arguments, final_result)
 
         # Store in semantic cache (H2: only cache read-only tools)
+        # C1 fix: cache the *uncompressed* result (before footer) to avoid
+        # caching the "[Compressed: ... Re-call for full detail.]" footer,
+        # which would create an unresolvable loop on cache hits.
         if self._semantic_cache is not None and self._is_cacheable(name):
-            await self._store_semantic_cache(name, arguments, final_result)
+            await self._store_semantic_cache(name, arguments, result)
 
         # Record usage in reranker
         if self._reranker is not None:
