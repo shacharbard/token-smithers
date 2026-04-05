@@ -72,6 +72,19 @@ CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY,
     applied_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS sessions (
+    session_id TEXT PRIMARY KEY,
+    started_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tool_usage_sessions (
+    tool_name TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    call_count INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (tool_name, session_id)
+);
 """
 
 
@@ -178,6 +191,32 @@ class SQLiteLearningStore:
             await db.execute(
                 "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
                 (3, now),
+            )
+            await db.commit()
+
+        # --- Migration v4: sessions + tool_usage_sessions tables ---
+        if current_version < 4:
+            await db.execute(
+                """\
+                CREATE TABLE IF NOT EXISTS sessions (
+                    session_id TEXT PRIMARY KEY,
+                    started_at TEXT NOT NULL
+                )"""
+            )
+            await db.execute(
+                """\
+                CREATE TABLE IF NOT EXISTS tool_usage_sessions (
+                    tool_name TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    call_count INTEGER DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (tool_name, session_id)
+                )"""
+            )
+            now = datetime.now(timezone.utc).isoformat()
+            await db.execute(
+                "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
+                (4, now),
             )
             await db.commit()
 
