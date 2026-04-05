@@ -1517,3 +1517,58 @@ class TestCacheableWordBoundary:
         assert proxy._is_cacheable("list_tools") is True
         assert proxy._is_cacheable("check_status") is True
         assert proxy._is_cacheable("search_files") is True
+
+
+class TestSchemaVirtualizationCacheKeyIncludesContent:
+    """H2: Virtualization cache key must include schema content hash."""
+
+    @pytest.mark.anyio
+    async def test_cache_invalidated_when_schema_changes(self) -> None:
+        """Same tool names but different schemas must re-virtualize."""
+        from token_sieve.server.proxy import ProxyServer
+
+        tools_v1 = [
+            _make_tool("read_file", "Read a file"),
+        ]
+        tools_v2 = [
+            types.Tool(
+                name="read_file",
+                description="Read a file (v2 with new schema)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "encoding": {"type": "string"},
+                    },
+                },
+            ),
+        ]
+
+        connector = _make_fake_connector(tools=tools_v1)
+        filt = _make_fake_filter(allowed=True)
+        pipeline = _make_fake_pipeline()
+        sink = _make_fake_sink()
+        virtualizer = MagicMock()
+        virtualizer.virtualize.return_value = [
+            {"name": "read_file", "description": "desc", "inputSchema": {"type": "object"}},
+        ]
+
+        proxy = ProxyServer(
+            backend_connector=connector,
+            tool_filter=filt,
+            pipeline=pipeline,
+            metrics_sink=sink,
+            schema_virtualizer=virtualizer,
+        )
+
+        await proxy.handle_list_tools()
+        assert virtualizer.virtualize.call_count == 1
+
+        # Change schema content but keep same tool names
+        connector.list_tools = AsyncMock(return_value=tools_v2)
+
+        await proxy.handle_list_tools()
+        # Should re-virtualize because schema content changed
+        assert virtualizer.virtualize.call_count == 2, (
+            "Cache key only checked tool names, not schema content"
+        )

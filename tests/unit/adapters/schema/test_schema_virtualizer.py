@@ -445,3 +445,25 @@ class TestFrequencyAwareTierSelection:
         assert "path" in result[0]["inputSchema"]["properties"]
         # search_code: cold + complex -> Tier 2 (stays Tier 2 because >4 params)
         assert "properties" in result[1]["inputSchema"]
+
+
+class TestOriginalsPruning:
+    """M20: _originals must be pruned of tools no longer in the current list."""
+
+    def test_originals_pruned_after_tool_removed(self) -> None:
+        """After virtualizing without a tool, its original must be pruned."""
+        v = SchemaVirtualizer()
+        tools_v1 = [SIMPLE_2PARAM_TOOL, GITHUB_SEARCH_TOOL]
+        v.virtualize(tools_v1)
+        assert "search_repositories" in v._originals
+        assert "read_file" in v._originals
+
+        # Now virtualize without search_repositories
+        tools_v2 = [SIMPLE_2PARAM_TOOL]
+        v.virtualize(tools_v2)
+        # search_repositories should be pruned from _originals
+        assert "search_repositories" not in v._originals, (
+            "Removed tool still in _originals — memory leak"
+        )
+        # read_file should still be present
+        assert "read_file" in v._originals

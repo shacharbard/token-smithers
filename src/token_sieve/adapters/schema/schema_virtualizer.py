@@ -71,6 +71,13 @@ class SchemaVirtualizer:
 
             result.append(compressed)
 
+        # M20 fix: prune _originals entries not in current tool list to
+        # prevent unbounded memory growth when tools are removed.
+        current_names = {tool.get("name", "") for tool in tools}
+        stale_keys = [k for k in self._originals if k not in current_names]
+        for k in stale_keys:
+            del self._originals[k]
+
         return result
 
     def get_full_schema(self, tool_name: str) -> dict | None:

@@ -193,7 +193,18 @@ class ProxyServer:
 
         # Schema virtualization: compress tool schemas after reranking
         if self._schema_virtualizer is not None:
-            tools_key = tuple(t.name for t in filtered)
+            # H2 fix: include schema content hash in cache key, not just names.
+            # This ensures cache invalidation when a tool's schema changes.
+            import hashlib
+            import json as _json
+            schema_digest = hashlib.sha256(
+                _json.dumps(
+                    [(t.name, t.description, t.inputSchema) for t in filtered],
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest()[:16]
+            tools_key = (schema_digest,) + tuple(t.name for t in filtered)
             if self._virtualized_cache_key == tools_key:
                 return self._virtualized_cache_result  # type: ignore[return-value]
             pre_virtualized = filtered
