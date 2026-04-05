@@ -358,3 +358,177 @@ class TestSyntheticToolDispatch:
         await proxy.handle_call_tool("discover_tools", {"query": "test"})
 
         store.record_call.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Task 3: explain_compression handler + related tools surfacing
+# ---------------------------------------------------------------------------
+
+
+def _make_compression_event(
+    strategy: str,
+    original: int = 1000,
+    compressed: int = 500,
+) -> CompressionEvent:
+    return CompressionEvent(
+        original_tokens=original,
+        compressed_tokens=compressed,
+        strategy_name=strategy,
+        content_type=ContentType.TEXT,
+        is_regret=False,
+    )
+
+
+class TestExplainCompression:
+    """explain_compression synthetic tool handler."""
+
+    @pytest.mark.anyio
+    async def test_explain_compression_returns_breakdown(self) -> None:
+        """Returns per-adapter breakdown when events exist for a tool."""
+        from token_sieve.adapters.visibility.visibility_controller import (
+            VisibilityController,
+        )
+
+        vc = VisibilityController(min_visible_floor=1, cold_start_sessions=3)
+        store = _make_fake_learning_store(session_count=5)
+        proxy = _make_proxy(
+            tools=[_make_tool("tool_a")],
+            visibility_controller=vc,
+            learning_store=store,
+        )
+
+        # Populate _last_compression_events manually
+        proxy._last_compression_events["tool_a"] = [
+            _make_compression_event("whitespace_normalizer", 1000, 800),
+            _make_compression_event("null_field_elider", 800, 500),
+        ]
+
+        result = await proxy.handle_call_tool(
+            "explain_compression", {"tool_name": "tool_a"}
+        )
+        assert not result.isError
+        text = result.content[0].text
+        assert "whitespace_normalizer" in text
+        assert "null_field_elider" in text
+        # Should contain token counts
+        assert "1000" in text or "800" in text
+        assert "500" in text
+
+    @pytest.mark.anyio
+    async def test_explain_compression_no_events(self) -> None:
+        """Returns informative message when no compression data exists."""
+        from token_sieve.adapters.visibility.visibility_controller import (
+            VisibilityController,
+        )
+
+        vc = VisibilityController(min_visible_floor=1, cold_start_sessions=3)
+        store = _make_fake_learning_store(session_count=5)
+        proxy = _make_proxy(
+            tools=[_make_tool("tool_a")],
+            visibility_controller=vc,
+            learning_store=store,
+        )
+
+        result = await proxy.handle_call_tool(
+            "explain_compression", {"tool_name": "unknown_tool"}
+        )
+        assert not result.isError
+        text = result.content[0].text
+        assert "no compression data" in text.lower() or "no data" in text.lower()
+
+    @pytest.mark.anyio
+    async def test_explain_compression_default_last_tool(self) -> None:
+        """Falls back to most recently called tool when no tool_name given."""
+        from token_sieve.adapters.visibility.visibility_controller import (
+            VisibilityController,
+        )
+
+        vc = VisibilityController(min_visible_floor=1, cold_start_sessions=3)
+        store = _make_fake_learning_store(session_count=5)
+        proxy = _make_proxy(
+            tools=[_make_tool("tool_a")],
+            visibility_controller=vc,
+            learning_store=store,
+        )
+
+        proxy._last_called_tool = "tool_a"
+        proxy._last_compression_events["tool_a"] = [
+            _make_compression_event("whitespace_normalizer", 500, 300),
+        ]
+
+        result = await proxy.handle_call_tool("explain_compression", {})
+        assert not result.isError
+        text = result.content[0].text
+        assert "whitespace_normalizer" in text
+
+
+class TestRelatedToolsSurfacing:
+    """Related tools footer on hidden tool direct calls."""
+
+    @pytest.mark.anyio
+    async def test_related_tools_surfacing_on_hidden_call(self) -> None:
+        """Calling a hidden tool appends co-occurrence footer."""
+        from token_sieve.adapters.visibility.visibility_controller import (
+            VisibilityController,
+        )
+
+        tools = [
+            _make_tool("hidden_tool", "A hidden tool"),
+            _make_tool("active_tool", "Active tool"),
+        ]
+        usage_stats = [_make_usage_record("active_tool", 10)]
+
+        vc = VisibilityController(min_visible_floor=1, cold_start_sessions=3)
+
+        cooccurrence_record = MagicMock()
+        cooccurrence_record.tool_a = "hidden_tool"
+        cooccurrence_record.tool_b = "related_tool"
+        cooccurrence_record.co_count = 5
+        store = _make_fake_learning_store(
+            usage_stats=usage_stats,
+            session_count=5,
+            cooccurrence=[cooccurrence_record],
+        )
+
+        proxy = _make_proxy(
+            tools=tools,
+            visibility_controller=vc,
+            learning_store=store,
+            call_result=_make_call_result("tool output"),
+        )
+
+        # Populate hidden tools
+        await proxy.handle_list_tools()
+
+        # Call the hidden tool by name
+        result = await proxy.handle_call_tool("hidden_tool", {})
+        text = result.content[0].text
+        assert "[Token Smithers]" in text or "Related tools" in text.lower()
+
+    @pytest.mark.anyio
+    async def test_no_related_footer_for_visible_tool(self) -> None:
+        """Visible tools do not get related tools footer."""
+        from token_sieve.adapters.visibility.visibility_controller import (
+            VisibilityController,
+        )
+
+        tools = [_make_tool("visible_tool")]
+        usage_stats = [_make_usage_record("visible_tool", 10)]
+
+        vc = VisibilityController(min_visible_floor=1, cold_start_sessions=3)
+        store = _make_fake_learning_store(
+            usage_stats=usage_stats,
+            session_count=5,
+        )
+
+        proxy = _make_proxy(
+            tools=tools,
+            visibility_controller=vc,
+            learning_store=store,
+            call_result=_make_call_result("tool output"),
+        )
+
+        await proxy.handle_list_tools()
+        result = await proxy.handle_call_tool("visible_tool", {})
+        text = result.content[0].text
+        assert "[Token Smithers]" not in text
