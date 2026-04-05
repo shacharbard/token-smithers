@@ -212,6 +212,22 @@ class SemanticCacheConfig(BaseModel):
     embedder: str | None = None  # Embedder backend for cosine similarity (e.g. "model2vec"); None=SequenceMatcher
 
 
+class ToolVisibilityConfig(BaseModel):
+    """Tool visibility control settings.
+
+    Controls frequency-based hiding of unused MCP tools to reduce
+    context window consumption.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    enabled: bool = True
+    frequency_threshold: int = 3  # Sessions of usage data before hiding
+    min_visible_floor: int = 10  # Top-K most-called tools always visible
+    cold_start_sessions: int = 3  # Show all tools until this many sessions
+    discover_tools_threshold: int = 5  # Minimum tools always discoverable
+
+
 class TokenSieveConfig(BaseModel):
     """Top-level token-sieve configuration.
 
@@ -235,6 +251,7 @@ class TokenSieveConfig(BaseModel):
     )
     system_prompt: SystemPromptConfig = Field(default_factory=SystemPromptConfig)
     semantic_cache: SemanticCacheConfig = Field(default_factory=SemanticCacheConfig)
+    tool_visibility: ToolVisibilityConfig = Field(default_factory=ToolVisibilityConfig)
     compaction_warning_threshold: int = 80000  # Cumulative compressed tokens before one-time warning (~40% of 200K context)
     model: str = "claude-sonnet-4-5"  # Model name for tokencost pricing in stats/estimate commands
 
