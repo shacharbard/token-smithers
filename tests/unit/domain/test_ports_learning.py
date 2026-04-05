@@ -319,6 +319,9 @@ class TestLearningStoreStructuralSubtyping:
             async def record_session(self, session_id: str) -> None:
                 pass
 
+            async def end_session(self, session_id: str) -> None:
+                pass
+
             async def get_session_count(self) -> int:
                 return 0
 

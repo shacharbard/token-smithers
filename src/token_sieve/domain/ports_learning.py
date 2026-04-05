@@ -127,6 +127,10 @@ class LearningStore(Protocol):
         """Record a session start. Idempotent on duplicate session_id."""
         ...
 
+    async def end_session(self, session_id: str) -> None:
+        """Record session end time. No-op if session not found."""
+        ...
+
     async def get_session_count(self) -> int:
         """Return count of distinct recorded sessions."""
         ...

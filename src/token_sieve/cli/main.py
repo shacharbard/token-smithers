@@ -187,33 +187,28 @@ async def _inject_visibility_instructions(
     except Exception:
         logger.debug("Session recording failed, continuing")
 
-    # Eager visibility pre-computation: inject hint if tools are hidden
+    # H2 fix: reuse proxy's VisibilityController instead of creating a new one
     try:
-        from token_sieve.adapters.visibility.visibility_controller import (
-            VisibilityController,
-        )
+        vc = proxy._visibility_controller  # type: ignore[attr-defined]
+        if vc is not None:
+            from token_sieve.domain.constants import DEFAULT_SERVER_ID
 
-        raw_tools = await connector.list_tools()  # type: ignore[attr-defined]
-        usage_stats = await learning_store.get_usage_stats("default")
-        session_count = await learning_store.get_session_count()
+            raw_tools = await connector.list_tools()  # type: ignore[attr-defined]
+            usage_stats = await learning_store.get_usage_stats(DEFAULT_SERVER_ID)
+            session_count = await learning_store.get_session_count()
 
-        vc = VisibilityController(
-            frequency_threshold=config.tool_visibility.frequency_threshold,  # type: ignore[attr-defined]
-            min_visible_floor=config.tool_visibility.min_visible_floor,  # type: ignore[attr-defined]
-            cold_start_sessions=config.tool_visibility.cold_start_sessions,  # type: ignore[attr-defined]
-        )
-        _visible, hidden = vc.apply(
-            raw_tools, usage_stats, session_count=session_count
-        )
-
-        if hidden:
-            hidden_count = len(hidden)
-            hint = (
-                f"\n\n[token-sieve] {hidden_count} tool(s) are hidden based on usage. "
-                f"Use discover_tools to reveal them."
+            _visible, hidden = vc.apply(
+                raw_tools, usage_stats, session_count=session_count
             )
-            existing = connector.get_instructions() or ""  # type: ignore[attr-defined]
-            connector.set_instructions(existing + hint)  # type: ignore[attr-defined]
+
+            if hidden:
+                # M10 fix: generic hint without exact count
+                hint = (
+                    "\n\n[token-sieve] Some tools may be hidden based on usage. "
+                    "Use discover_tools to reveal them."
+                )
+                existing = connector.get_instructions() or ""  # type: ignore[attr-defined]
+                connector.set_instructions(existing + hint)  # type: ignore[attr-defined]
     except Exception:
         logger.debug("Visibility instruction injection failed, continuing")
 

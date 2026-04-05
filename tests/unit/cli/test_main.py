@@ -207,6 +207,143 @@ class TestCliErrorHandling:
         assert exit_code == 130
 
 
+class TestM10GenericInstructionHint:
+    """M10: Instruction hint should be generic, not include exact hidden count."""
+
+    @pytest.mark.asyncio
+    async def test_instruction_hint_is_generic(self) -> None:
+        """Visibility hint should not expose exact count of hidden tools."""
+        from token_sieve.cli.main import _inject_visibility_instructions
+
+        # Create a proxy mock with VC that hides tools
+        proxy = AsyncMock()
+        proxy._session_id = "test-session"
+        learning_store = AsyncMock()
+        learning_store.record_session = AsyncMock()
+        learning_store.get_usage_stats = AsyncMock(return_value=[])
+        learning_store.get_session_count = AsyncMock(return_value=10)
+        proxy._learning_store = learning_store
+
+        from token_sieve.adapters.visibility.visibility_controller import (
+            VisibilityController,
+        )
+
+        vc = VisibilityController(
+            frequency_threshold=3, min_visible_floor=0, cold_start_sessions=0
+        )
+        proxy._visibility_controller = vc
+
+        import mcp.types as types
+
+        tools = [
+            types.Tool(name=f"tool_{i}", description=f"Tool {i}", inputSchema={"type": "object"})
+            for i in range(5)
+        ]
+        connector = AsyncMock()
+        connector.list_tools = AsyncMock(return_value=tools)
+        connector.get_instructions = AsyncMock(return_value="")
+        connector.set_instructions = AsyncMock()
+
+        config = AsyncMock()
+        config.tool_visibility.frequency_threshold = 3
+        config.tool_visibility.min_visible_floor = 0
+        config.tool_visibility.cold_start_sessions = 0
+
+        await _inject_visibility_instructions(proxy, connector, config)
+
+        if connector.set_instructions.called:
+            hint = connector.set_instructions.call_args[0][0]
+            # M10: hint should NOT contain exact count like "5 tool(s)"
+            import re
+            assert not re.search(r"\d+ tool\(s\)", hint), (
+                f"M10: instruction hint should be generic, not include exact count. "
+                f"Got: {hint}"
+            )
+
+
+class TestM11DefaultServerIdConstant:
+    """M11: 'default' server_id should use a shared constant."""
+
+    def test_default_server_id_constant_exists(self) -> None:
+        """A DEFAULT_SERVER_ID constant should exist in the domain layer."""
+        try:
+            from token_sieve.domain.constants import DEFAULT_SERVER_ID
+            assert DEFAULT_SERVER_ID == "default"
+        except ImportError:
+            pytest.fail(
+                "M11: token_sieve.domain.constants.DEFAULT_SERVER_ID not found. "
+                "Extract hardcoded 'default' to a shared constant."
+            )
+
+
+class TestM7EndedAtColumn:
+    """M7: Sessions table should have ended_at + end_session method."""
+
+    @pytest.mark.asyncio
+    async def test_sessions_table_has_ended_at_column(self) -> None:
+        """sessions table must have an ended_at column."""
+        from token_sieve.adapters.learning.sqlite_store import SQLiteLearningStore
+
+        store = await SQLiteLearningStore.connect(":memory:")
+        async with store._db.execute("PRAGMA table_info(sessions)") as cursor:
+            columns = [row[1] for row in await cursor.fetchall()]
+        assert "ended_at" in columns, (
+            f"M7: sessions table missing ended_at column. Columns: {columns}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_end_session_method_exists(self) -> None:
+        """SQLiteLearningStore must have an end_session method."""
+        from token_sieve.adapters.learning.sqlite_store import SQLiteLearningStore
+
+        store = await SQLiteLearningStore.connect(":memory:")
+        assert hasattr(store, "end_session"), (
+            "M7: SQLiteLearningStore missing end_session method"
+        )
+
+    @pytest.mark.asyncio
+    async def test_end_session_updates_ended_at(self) -> None:
+        """end_session should set ended_at on the session row."""
+        from token_sieve.adapters.learning.sqlite_store import SQLiteLearningStore
+
+        store = await SQLiteLearningStore.connect(":memory:")
+        await store.record_session("test-session")
+        await store.end_session("test-session")
+        async with store._db.execute(
+            "SELECT ended_at FROM sessions WHERE session_id = ?",
+            ("test-session",),
+        ) as cursor:
+            row = await cursor.fetchone()
+            assert row is not None
+            assert row[0] is not None, "M7: ended_at should be set after end_session"
+
+    @pytest.mark.asyncio
+    async def test_end_session_protocol(self) -> None:
+        """LearningStore Protocol should declare end_session."""
+        from token_sieve.domain.ports_learning import LearningStore
+
+        assert hasattr(LearningStore, "end_session"), (
+            "M7: LearningStore Protocol missing end_session method"
+        )
+
+
+class TestH2ReuseProxyVC:
+    """H2: _inject_visibility_instructions must reuse proxy._visibility_controller."""
+
+    @pytest.mark.asyncio
+    async def test_uses_proxy_vc_not_new_instance(self) -> None:
+        """Should use proxy._visibility_controller instead of creating new VC."""
+        import inspect
+        from token_sieve.cli.main import _inject_visibility_instructions
+
+        source = inspect.getsource(_inject_visibility_instructions)
+        # H2: function should NOT instantiate VisibilityController
+        assert "VisibilityController(" not in source, (
+            "H2: _inject_visibility_instructions creates a new VisibilityController "
+            "instead of reusing proxy._visibility_controller"
+        )
+
+
 class TestProxyBackendWiring:
     """Finding 1: _run_proxy must wire a real backend, not leave the stub."""
 

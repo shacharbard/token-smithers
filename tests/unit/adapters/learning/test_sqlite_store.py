@@ -94,7 +94,7 @@ class TestSQLiteSpecificBehavior:
         ) as cursor:
             row = await cursor.fetchone()
             assert row is not None
-            assert row[0] == 4
+            assert row[0] == 5  # M7: migration v5 adds ended_at column
         await store2.close()
 
     async def test_migration_preserves_existing_data(self, tmp_path) -> None:

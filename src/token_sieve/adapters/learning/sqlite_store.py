@@ -75,7 +75,8 @@ CREATE TABLE IF NOT EXISTS schema_version (
 
 CREATE TABLE IF NOT EXISTS sessions (
     session_id TEXT PRIMARY KEY,
-    started_at TEXT NOT NULL
+    started_at TEXT NOT NULL,
+    ended_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at);
 
@@ -205,6 +206,21 @@ class SQLiteLearningStore:
             await db.execute(
                 "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
                 (4, now),
+            )
+            await db.commit()
+
+        # --- Migration v5: ended_at column on sessions ---
+        if current_version < 5:
+            async with db.execute("PRAGMA table_info(sessions)") as cursor:
+                columns = [r[1] for r in await cursor.fetchall()]
+            if "ended_at" not in columns:
+                await db.execute(
+                    "ALTER TABLE sessions ADD COLUMN ended_at TEXT"
+                )
+            now = datetime.now(timezone.utc).isoformat()
+            await db.execute(
+                "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
+                (5, now),
             )
             await db.commit()
 
@@ -716,6 +732,15 @@ class SQLiteLearningStore:
         await self._db.execute(
             "INSERT OR IGNORE INTO sessions (session_id, started_at) VALUES (?, ?)",
             (session_id, now),
+        )
+        await self._db.commit()
+
+    async def end_session(self, session_id: str) -> None:
+        """Record session end time. No-op if session not found."""
+        now = datetime.now(timezone.utc).isoformat()
+        await self._db.execute(
+            "UPDATE sessions SET ended_at = ? WHERE session_id = ?",
+            (now, session_id),
         )
         await self._db.commit()
 

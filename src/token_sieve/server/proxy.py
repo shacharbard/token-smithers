@@ -19,6 +19,7 @@ from mcp.server.lowlevel import Server
 from mcp.server.models import InitializationOptions
 
 from token_sieve.config.schema import TokenSieveConfig
+from token_sieve.domain.constants import DEFAULT_SERVER_ID
 from token_sieve.domain.model import CompressionEvent, ContentEnvelope, ContentType
 from token_sieve.domain.pipeline import CompressionPipeline
 from token_sieve.server.metrics_sink import StderrMetricsSink
@@ -239,7 +240,7 @@ class ProxyServer:
             ):
                 _, usage_stats, session_count = self._usage_stats_cache
             else:
-                usage_stats = await self._learning_store.get_usage_stats("default")
+                usage_stats = await self._learning_store.get_usage_stats(DEFAULT_SERVER_ID)
                 session_count = await self._learning_store.get_session_count()
                 self._usage_stats_cache = (now, usage_stats, session_count)
             visible, hidden = self._visibility_controller.apply(
@@ -431,7 +432,7 @@ class ProxyServer:
         protocol, adding complexity for minimal benefit.
         """
         try:
-            await self._learning_store.record_call(name, "default")
+            await self._learning_store.record_call(name, DEFAULT_SERVER_ID)
             # M1 fix: use batch method instead of N individual INSERT+commit calls
             if events:
                 await self._learning_store.record_compression_events_batch(
@@ -666,7 +667,7 @@ class ProxyServer:
         disabled_adapters: list[str] = []
         if self._learning_store is not None:
             try:
-                pc = await self._learning_store.get_pipeline_config(name, "default")
+                pc = await self._learning_store.get_pipeline_config(name, DEFAULT_SERVER_ID)
                 if pc is not None:
                     is_reeval = pc.eval_count > 0 and pc.eval_count % 50 == 0
                     if not is_reeval:
@@ -1224,6 +1225,10 @@ class _DeferredLearningStore:
     async def record_session(self, session_id: str) -> None:
         store = await self._ensure_connected()
         await store.record_session(session_id)
+
+    async def end_session(self, session_id: str) -> None:
+        store = await self._ensure_connected()
+        await store.end_session(session_id)
 
     async def get_session_count(self) -> int:
         store = await self._ensure_connected()

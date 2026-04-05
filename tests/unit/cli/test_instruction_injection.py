@@ -62,12 +62,19 @@ def _setup_mocks(
     mock_learning_store.get_session_count = AsyncMock(return_value=10)
     mock_learning_store.record_session = AsyncMock()
 
-    # Proxy
+    # Proxy — H2 fix: _inject_visibility_instructions uses proxy._visibility_controller
+    from token_sieve.adapters.visibility.visibility_controller import (
+        VisibilityController,
+    )
+
     mock_proxy = MagicMock()
     mock_proxy.run = AsyncMock()
     mock_proxy.rebind_connector = MagicMock()
     mock_proxy._session_id = "test-session-123"
     mock_proxy._learning_store = mock_learning_store
+    mock_proxy._visibility_controller = VisibilityController(
+        frequency_threshold=3, min_visible_floor=5, cold_start_sessions=3
+    )
     mock_proxy._pipeline = MagicMock()
     mock_proxy._pipeline.process.return_value = (MagicMock(content="compressed"), [])
 
@@ -116,7 +123,8 @@ class TestInstructionInjection:
             mock_connector.set_instructions.assert_called()
             call_args = mock_connector.set_instructions.call_args[0][0]
             assert "discover_tools" in call_args
-            assert "5" in call_args  # 5 hidden tools
+            # M10 fix: hint is now generic, no exact count
+            assert "hidden" in call_args.lower()
 
     def test_no_injection_when_all_visible(self, tmp_path: Path) -> None:
         """When all tools are visible, no hint is injected."""
@@ -345,16 +353,14 @@ class TestFullStartupSequence:
             assert exit_code == 0
             # Session was recorded
             mock_ls.record_session.assert_awaited_once_with("test-session-123")
-            # Instruction hint was injected with correct hidden count
-            # 8 tools have usage -> visible, 12 don't -> hidden
-            # But min_visible_floor=5, and we have 8 visible already, so 12 hidden
+            # Instruction hint was injected (M10: now generic, no exact count)
             hint_calls = [
                 c for c in mock_connector.set_instructions.call_args_list
                 if "discover_tools" in c[0][0]
             ]
             assert len(hint_calls) == 1
             hint_text = hint_calls[0][0][0]
-            assert "12" in hint_text  # 12 hidden tools
+            assert "hidden" in hint_text.lower()
             # Proxy ran
             mock_proxy.run.assert_awaited_once()
 
