@@ -230,3 +230,131 @@ class TestHandleListToolsVisibility:
         result = await proxy.handle_list_tools()
         names = {t.name for t in result}
         assert "explain_compression" in names
+
+
+# ---------------------------------------------------------------------------
+# Task 2: Synthetic tool dispatch + discover_tools handler
+# ---------------------------------------------------------------------------
+
+
+class TestSyntheticToolDispatch:
+    """Synthetic tool dispatch and discover_tools handler."""
+
+    @pytest.mark.anyio
+    async def test_discover_tools_call_returns_results(self) -> None:
+        """discover_tools returns DietMCP summaries for matching hidden tools."""
+        from token_sieve.adapters.visibility.visibility_controller import (
+            VisibilityController,
+        )
+
+        # 3 tools containing "search" in name/description that will be hidden
+        tools = [
+            _make_tool("search_files", "Search files by pattern"),
+            _make_tool("search_code", "Search code by regex"),
+            _make_tool("search_docs", "Search documentation"),
+            _make_tool("active_tool", "Already used tool"),
+        ]
+        usage_stats = [_make_usage_record("active_tool", 10)]
+
+        vc = VisibilityController(min_visible_floor=1, cold_start_sessions=3)
+        store = _make_fake_learning_store(usage_stats=usage_stats, session_count=5)
+        proxy = _make_proxy(
+            tools=tools,
+            visibility_controller=vc,
+            learning_store=store,
+        )
+
+        # First call handle_list_tools to populate hidden tools
+        await proxy.handle_list_tools()
+
+        # Now call discover_tools
+        result = await proxy.handle_call_tool(
+            "discover_tools", {"query": "search"}
+        )
+        assert not result.isError
+        text = result.content[0].text
+        assert "search_files" in text
+        assert "search_code" in text
+        assert "search_docs" in text
+
+    @pytest.mark.anyio
+    async def test_discover_tools_auto_unhides(self) -> None:
+        """After discover_tools, matched tools appear in handle_list_tools."""
+        from token_sieve.adapters.visibility.visibility_controller import (
+            VisibilityController,
+        )
+
+        tools = [
+            _make_tool("search_files", "Search files"),
+            _make_tool("active_tool", "Active tool"),
+        ]
+        usage_stats = [_make_usage_record("active_tool", 10)]
+
+        vc = VisibilityController(min_visible_floor=1, cold_start_sessions=3)
+        store = _make_fake_learning_store(usage_stats=usage_stats, session_count=5)
+        proxy = _make_proxy(
+            tools=tools,
+            visibility_controller=vc,
+            learning_store=store,
+        )
+
+        # Populate hidden
+        await proxy.handle_list_tools()
+
+        # Call discover_tools to unhide
+        await proxy.handle_call_tool("discover_tools", {"query": "search"})
+
+        # Now the tool should be visible
+        result = await proxy.handle_list_tools()
+        names = {t.name for t in result}
+        assert "search_files" in names
+
+    @pytest.mark.anyio
+    async def test_synthetic_tool_before_filter_gate(self) -> None:
+        """Synthetic tools bypass ToolFilter — not blocked even if filter denies."""
+        from token_sieve.adapters.visibility.visibility_controller import (
+            VisibilityController,
+        )
+
+        tools = [_make_tool("tool_a")]
+        vc = VisibilityController(min_visible_floor=1, cold_start_sessions=3)
+        store = _make_fake_learning_store(session_count=5)
+
+        # Filter that blocks everything
+        filt = MagicMock()
+        filt.is_allowed = MagicMock(return_value=False)
+        filt.filter_tools = MagicMock(side_effect=lambda t: t)
+
+        from token_sieve.server.proxy import ProxyServer
+
+        proxy = ProxyServer(
+            backend_connector=_make_fake_connector(tools=tools),
+            tool_filter=filt,
+            pipeline=_make_fake_pipeline(),
+            metrics_sink=_make_fake_sink(),
+            learning_store=store,
+            visibility_controller=vc,
+        )
+
+        result = await proxy.handle_call_tool("discover_tools", {"query": "all"})
+        assert not result.isError
+
+    @pytest.mark.anyio
+    async def test_synthetic_tools_not_recorded(self) -> None:
+        """Synthetic tools do not get recorded to learning store."""
+        from token_sieve.adapters.visibility.visibility_controller import (
+            VisibilityController,
+        )
+
+        tools = [_make_tool("tool_a")]
+        vc = VisibilityController(min_visible_floor=1, cold_start_sessions=3)
+        store = _make_fake_learning_store(session_count=5)
+        proxy = _make_proxy(
+            tools=tools,
+            visibility_controller=vc,
+            learning_store=store,
+        )
+
+        await proxy.handle_call_tool("discover_tools", {"query": "test"})
+
+        store.record_call.assert_not_called()
