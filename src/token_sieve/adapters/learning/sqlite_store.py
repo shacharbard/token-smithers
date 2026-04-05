@@ -721,3 +721,54 @@ class SQLiteLearningStore:
                 )
 
         return suggestions
+
+    async def record_session(self, session_id: str) -> None:
+        """Record a session start. Idempotent on duplicate session_id."""
+        now = datetime.now(timezone.utc).isoformat()
+        await self._db.execute(
+            "INSERT OR IGNORE INTO sessions (session_id, started_at) VALUES (?, ?)",
+            (session_id, now),
+        )
+        await self._db.commit()
+
+    async def get_session_count(self) -> int:
+        """Return count of distinct recorded sessions."""
+        async with self._db.execute("SELECT COUNT(*) FROM sessions") as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+    async def record_tool_session_call(
+        self, tool_name: str, session_id: str, server_id: str
+    ) -> None:
+        """Increment per-session call count for a tool.
+
+        Also calls record_call() to maintain backward compat with
+        cumulative tool_usage table.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        await self._db.execute(
+            "INSERT INTO tool_usage_sessions (tool_name, session_id, call_count, created_at) "
+            "VALUES (?, ?, 1, ?) "
+            "ON CONFLICT(tool_name, session_id) DO UPDATE SET "
+            "call_count = call_count + 1",
+            (tool_name, session_id, now),
+        )
+        await self._db.commit()
+        # Maintain backward compat with cumulative tool_usage table
+        await self.record_call(tool_name, server_id)
+
+    async def get_tool_usage_in_recent_sessions(
+        self, tool_name: str, last_n: int
+    ) -> int:
+        """Return total call count for tool across last N sessions."""
+        async with self._db.execute(
+            "SELECT COALESCE(SUM(tus.call_count), 0) "
+            "FROM tool_usage_sessions tus "
+            "WHERE tus.tool_name = ? AND tus.session_id IN ("
+            "  SELECT session_id FROM sessions "
+            "  ORDER BY started_at DESC LIMIT ?"
+            ")",
+            (tool_name, last_n),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0

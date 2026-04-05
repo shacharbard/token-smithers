@@ -128,3 +128,84 @@ class TestSessionMigration:
         assert row is not None, "tool_usage_sessions table not created by migration"
 
         await store.close()
+
+
+@pytest.mark.asyncio
+class TestSessionRecordingAndQuery:
+    """Test record_session, get_session_count, record_tool_session_call,
+    get_tool_usage_in_recent_sessions methods."""
+
+    @pytest.fixture()
+    async def store(self):
+        return await SQLiteLearningStore.connect(":memory:")
+
+    async def test_record_session(self, store: SQLiteLearningStore) -> None:
+        """Record 3 sessions, get_session_count returns 3."""
+        await store.record_session("s1")
+        await store.record_session("s2")
+        await store.record_session("s3")
+        count = await store.get_session_count()
+        assert count == 3
+
+    async def test_record_session_idempotent(
+        self, store: SQLiteLearningStore
+    ) -> None:
+        """Recording same session_id twice doesn't duplicate."""
+        await store.record_session("s1")
+        await store.record_session("s1")
+        count = await store.get_session_count()
+        assert count == 1
+
+    async def test_record_tool_session_call(
+        self, store: SQLiteLearningStore
+    ) -> None:
+        """Record calls for tool_a in session_1 and session_2, verify counts."""
+        await store.record_session("s1")
+        await store.record_session("s2")
+
+        await store.record_tool_session_call("tool_a", "s1", "srv1")
+        await store.record_tool_session_call("tool_a", "s1", "srv1")
+        await store.record_tool_session_call("tool_a", "s2", "srv1")
+
+        # Verify per-session counts via raw SQL
+        async with store._db.execute(
+            "SELECT call_count FROM tool_usage_sessions "
+            "WHERE tool_name='tool_a' AND session_id='s1'"
+        ) as cursor:
+            row = await cursor.fetchone()
+        assert row is not None and row[0] == 2
+
+        async with store._db.execute(
+            "SELECT call_count FROM tool_usage_sessions "
+            "WHERE tool_name='tool_a' AND session_id='s2'"
+        ) as cursor:
+            row = await cursor.fetchone()
+        assert row is not None and row[0] == 1
+
+    async def test_get_tool_usage_in_recent_sessions(
+        self, store: SQLiteLearningStore
+    ) -> None:
+        """5 sessions, tool_a called in sessions 3 and 5.
+
+        get_tool_usage_in_recent_sessions("tool_a", 3) should return
+        sum of calls in sessions 3, 4, 5 (last 3).
+        """
+        for i in range(1, 6):
+            await store.record_session(f"s{i}")
+
+        # tool_a called 2x in s3, 1x in s5
+        await store.record_tool_session_call("tool_a", "s3", "srv1")
+        await store.record_tool_session_call("tool_a", "s3", "srv1")
+        await store.record_tool_session_call("tool_a", "s5", "srv1")
+
+        result = await store.get_tool_usage_in_recent_sessions("tool_a", 3)
+        assert result == 3  # 2 from s3 + 1 from s5
+
+    async def test_tool_not_called_in_recent_sessions(
+        self, store: SQLiteLearningStore
+    ) -> None:
+        """Tool never called returns 0."""
+        await store.record_session("s1")
+        await store.record_session("s2")
+        result = await store.get_tool_usage_in_recent_sessions("unknown_tool", 5)
+        assert result == 0
