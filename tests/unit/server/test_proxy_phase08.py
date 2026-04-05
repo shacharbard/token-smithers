@@ -591,7 +591,7 @@ class TestStatsResourceVisibility:
         )
 
         resources = await proxy.handle_list_resources()
-        uris = [r.uri for r in resources]
+        uris = [str(r.uri) for r in resources]
         assert "token-sieve://stats" in uris
 
 

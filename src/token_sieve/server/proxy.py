@@ -147,8 +147,8 @@ class ProxyServer:
         ) -> types.CallToolResult:
             return await self.handle_call_tool(name, arguments or {})
 
-        # Register resource handlers for dashboard
-        if self._metrics_collector is not None:
+        # Register resource handlers for dashboard and/or visibility
+        if self._metrics_collector is not None or self._visibility_controller is not None:
             from mcp.types import Resource
 
             @server.list_resources()
@@ -166,7 +166,7 @@ class ProxyServer:
         from mcp.types import Resource
 
         resources = []
-        if self._metrics_collector is not None:
+        if self._metrics_collector is not None or self._visibility_controller is not None:
             resources.append(
                 Resource(
                     uri="token-sieve://stats",
@@ -181,12 +181,15 @@ class ProxyServer:
         """Read an MCP resource by URI."""
         import json
 
-        if uri == "token-sieve://stats" and self._metrics_collector is not None:
-            data = {
-                "session_id": self._session_id,
-                "session_summary": self._metrics_collector.session_summary(),
-                "strategy_breakdown": self._metrics_collector.strategy_breakdown(),
-            }
+        if uri == "token-sieve://stats":
+            data: dict[str, Any] = {"session_id": self._session_id}
+            if self._metrics_collector is not None:
+                data["session_summary"] = self._metrics_collector.session_summary()
+                data["strategy_breakdown"] = self._metrics_collector.strategy_breakdown()
+            if self._visibility_controller is not None:
+                data["tool_visibility"] = self._visibility_controller.hidden_stats()
+            if data.keys() == {"session_id"}:
+                raise ValueError(f"Unknown resource: {uri}")
             return json.dumps(data, indent=2)
         raise ValueError(f"Unknown resource: {uri}")
 
@@ -1184,6 +1187,18 @@ class _DeferredLearningStore:
     async def get_session_count(self) -> int:
         store = await self._ensure_connected()
         return await store.get_session_count()
+
+    async def record_tool_session_call(
+        self, tool_name: str, session_id: str, server_id: str
+    ) -> None:
+        store = await self._ensure_connected()
+        await store.record_tool_session_call(tool_name, session_id, server_id)
+
+    async def get_tool_usage_in_recent_sessions(
+        self, tool_name: str, last_n: int
+    ) -> int:
+        store = await self._ensure_connected()
+        return await store.get_tool_usage_in_recent_sessions(tool_name, last_n)
 
 
 class _DeferredSemanticCache:
