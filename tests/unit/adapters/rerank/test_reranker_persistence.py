@@ -66,6 +66,22 @@ class FakeLearningStore:
         self._frozen_orders = getattr(self, "_frozen_orders", {})
         return self._frozen_orders.get(server_id)
 
+    async def record_session(self, session_id: str) -> None:
+        pass
+
+    async def get_session_count(self) -> int:
+        return 0
+
+    async def record_tool_session_call(
+        self, tool_name: str, session_id: str, server_id: str
+    ) -> None:
+        pass
+
+    async def get_tool_usage_in_recent_sessions(
+        self, tool_name: str, last_n: int
+    ) -> int:
+        return 0
+
 
 @pytest.fixture
 def fake_store() -> FakeLearningStore:

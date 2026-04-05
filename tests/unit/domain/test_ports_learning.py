@@ -316,6 +316,22 @@ class TestLearningStoreStructuralSubtyping:
             ) -> list[dict]:
                 return []
 
+            async def record_session(self, session_id: str) -> None:
+                pass
+
+            async def get_session_count(self) -> int:
+                return 0
+
+            async def record_tool_session_call(
+                self, tool_name: str, session_id: str, server_id: str
+            ) -> None:
+                pass
+
+            async def get_tool_usage_in_recent_sessions(
+                self, tool_name: str, last_n: int
+            ) -> int:
+                return 0
+
         assert isinstance(MockStore(), LearningStore)
 
     def test_missing_method_not_instance(self) -> None:
@@ -562,3 +578,33 @@ class LearningStoreContract:
             is_regret=True,
         )
         await store.record_compression_event("session1", event, "read_file")
+
+    # --- Session tracking contract tests ---
+
+    async def test_record_session_and_count(self, store) -> None:
+        """Record sessions and verify count."""
+        await store.record_session("sess_1")
+        await store.record_session("sess_2")
+        count = await store.get_session_count()
+        assert count == 2
+
+    async def test_record_session_idempotent(self, store) -> None:
+        """Duplicate session_id does not increment count."""
+        await store.record_session("sess_1")
+        await store.record_session("sess_1")
+        count = await store.get_session_count()
+        assert count == 1
+
+    async def test_record_tool_session_call_and_query(self, store) -> None:
+        """Record tool calls per session, query recent sessions."""
+        await store.record_session("sess_1")
+        await store.record_session("sess_2")
+        await store.record_tool_session_call("read_file", "sess_2", "srv1")
+        result = await store.get_tool_usage_in_recent_sessions("read_file", 1)
+        assert result >= 1
+
+    async def test_tool_usage_zero_when_not_called(self, store) -> None:
+        """Tool not called in any session returns 0."""
+        await store.record_session("sess_1")
+        result = await store.get_tool_usage_in_recent_sessions("unknown", 5)
+        assert result == 0
