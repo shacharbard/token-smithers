@@ -366,9 +366,10 @@ class ProxyServer:
         """
         try:
             await self._learning_store.record_call(name, "default")
-            for event in events:
-                await self._learning_store.record_compression_event(
-                    self._session_id, event, name
+            # M1 fix: use batch method instead of N individual INSERT+commit calls
+            if events:
+                await self._learning_store.record_compression_events_batch(
+                    self._session_id, events, name
                 )
             # Success — reset failure counter
             self._learning_store_failures = 0

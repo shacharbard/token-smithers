@@ -57,6 +57,12 @@ class LearningStore(Protocol):
         """Record a compression event for auto-tuning analytics."""
         ...
 
+    async def record_compression_events_batch(
+        self, session_id: str, events: list[CompressionEvent], tool_name: str
+    ) -> None:
+        """Record multiple compression events in a single transaction."""
+        ...
+
     async def record_cooccurrence(self, tool_a: str, tool_b: str) -> None:
         """Record that two tools were called together in a session."""
         ...

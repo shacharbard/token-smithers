@@ -331,3 +331,43 @@ class TestResultCacheDedup:
         # Latest value wins
         result = await store.lookup_similar("read_file", '{"path":"/a"}', 1.0)
         assert result == "v2"
+
+
+class TestCooccurrenceNormalization:
+    """M5: Cooccurrence pairs must be normalized (min/max ordering)."""
+
+    @pytest.fixture
+    async def store(self):
+        from token_sieve.adapters.learning.sqlite_store import SQLiteLearningStore
+
+        s = await SQLiteLearningStore.connect(":memory:")
+        yield s
+        await s.close()
+
+    @pytest.mark.asyncio
+    async def test_both_directions_same_row(self, store) -> None:
+        """(A,B) and (B,A) should increment the same cooccurrence row."""
+        await store.record_cooccurrence("tool_x", "tool_y")
+        await store.record_cooccurrence("tool_y", "tool_x")
+
+        records = await store.get_cooccurrence("tool_x")
+        assert len(records) == 1, f"Expected 1 record, got {len(records)}"
+        assert records[0].co_count == 2
+
+    @pytest.mark.asyncio
+    async def test_get_cooccurrence_both_directions(self, store) -> None:
+        """get_cooccurrence should find records where tool appears as either a or b."""
+        await store.record_cooccurrence("tool_a", "tool_z")
+        # tool_z is stored as tool_b (tool_a < tool_z)
+        records = await store.get_cooccurrence("tool_z")
+        assert len(records) == 1, "Should find cooccurrence when tool is tool_b"
+
+
+class TestBatchMethodOnProtocol:
+    """M2: record_compression_events_batch must be declared on Protocol."""
+
+    def test_protocol_has_batch_method(self) -> None:
+        """LearningStore Protocol must declare record_compression_events_batch."""
+        from token_sieve.domain.ports_learning import LearningStore
+
+        assert hasattr(LearningStore, "record_compression_events_batch")

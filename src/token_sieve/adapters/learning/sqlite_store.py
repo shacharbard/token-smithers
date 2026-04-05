@@ -102,7 +102,9 @@ class SQLiteLearningStore:
         # Enable WAL and performance pragmas (no-op for :memory:)
         if db_path != ":memory:":
             await db.execute("PRAGMA journal_mode=WAL")
-            await db.execute("PRAGMA synchronous=FULL")  # M2: FULL for durability
+            # M6 fix: NORMAL is sufficient with WAL mode — WAL provides crash
+            # safety while NORMAL avoids per-call fsync bottleneck.
+            await db.execute("PRAGMA synchronous=NORMAL")
         await db.execute("PRAGMA cache_size=64000")
         await db.execute("PRAGMA foreign_keys=ON")
 
@@ -350,6 +352,8 @@ class SQLiteLearningStore:
     async def record_cooccurrence(self, tool_a: str, tool_b: str) -> None:
         """Record that two tools were called together."""
         now = datetime.now(timezone.utc).isoformat()
+        # M5 fix: normalize pair ordering so (A,B) and (B,A) are the same row
+        a, b = min(tool_a, tool_b), max(tool_a, tool_b)
         await self._db.execute(
             """\
             INSERT INTO tool_cooccurrence (tool_a, tool_b, co_count, last_seen)
@@ -358,16 +362,18 @@ class SQLiteLearningStore:
                 co_count = co_count + 1,
                 last_seen = excluded.last_seen
             """,
-            (tool_a, tool_b, now),
+            (a, b, now),
         )
         await self._db.commit()
 
     async def get_cooccurrence(self, tool_name: str) -> list[CooccurrenceRecord]:
-        """Get co-occurrence records where tool_name is tool_a."""
+        """Get co-occurrence records where tool_name appears as either tool_a or tool_b."""
+        # M5 fix: query both directions since pairs are now normalized
         async with self._db.execute(
             "SELECT tool_a, tool_b, co_count, last_seen "
-            "FROM tool_cooccurrence WHERE tool_a = ? ORDER BY co_count DESC",
-            (tool_name,),
+            "FROM tool_cooccurrence WHERE tool_a = ? OR tool_b = ? "
+            "ORDER BY co_count DESC",
+            (tool_name, tool_name),
         ) as cursor:
             rows = await cursor.fetchall()
             return [
@@ -441,13 +447,14 @@ class SQLiteLearningStore:
             "WHERE tool_name = ? AND server_id = ?",
             (tool_name, server_id),
         )
-        await self._db.commit()
+        # M3 fix: commit AFTER the SELECT to make the read-after-write atomic
         async with self._db.execute(
             "SELECT regret_streak FROM tool_pipeline_config "
             "WHERE tool_name = ? AND server_id = ?",
             (tool_name, server_id),
         ) as cursor:
             row = await cursor.fetchone()
+            await self._db.commit()
             return row[0] if row else 0
 
     async def reset_regret_streak(
