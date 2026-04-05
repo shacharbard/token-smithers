@@ -162,6 +162,44 @@ async def _run_proxy(config_path: str | None = None) -> int:
                 except Exception:
                     logger.debug("Instruction compression failed, using original")
 
+        # Session recording and instruction injection for tool visibility
+        if config.tool_visibility.enabled and proxy._learning_store is not None:
+            # Record session for cold-start tracking
+            try:
+                await proxy._learning_store.record_session(proxy._session_id)
+            except Exception:
+                logger.debug("Session recording failed, continuing")
+
+            # Eager visibility pre-computation: inject hint if tools are hidden
+            try:
+                from token_sieve.adapters.visibility.visibility_controller import (
+                    VisibilityController,
+                )
+
+                raw_tools = await connector.list_tools()
+                usage_stats = await proxy._learning_store.get_usage_stats("default")
+                session_count = await proxy._learning_store.get_session_count()
+
+                vc = VisibilityController(
+                    frequency_threshold=config.tool_visibility.frequency_threshold,
+                    min_visible_floor=config.tool_visibility.min_visible_floor,
+                    cold_start_sessions=config.tool_visibility.cold_start_sessions,
+                )
+                _visible, hidden = vc.apply(
+                    raw_tools, usage_stats, session_count=session_count
+                )
+
+                if hidden:
+                    hidden_count = len(hidden)
+                    hint = (
+                        f"\n\n[token-sieve] {hidden_count} tool(s) are hidden based on usage. "
+                        f"Use discover_tools to reveal them."
+                    )
+                    existing = connector.get_instructions() or ""
+                    connector.set_instructions(existing + hint)
+            except Exception:
+                logger.debug("Visibility instruction injection failed, continuing")
+
         await proxy.run()
     return 0
 

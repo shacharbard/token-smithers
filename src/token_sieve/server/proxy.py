@@ -961,6 +961,14 @@ class _DeferredLearningStore:
         store = await self._ensure_connected()
         return await store.get_suggestion_candidates(session_id)
 
+    async def record_session(self, session_id: str) -> None:
+        store = await self._ensure_connected()
+        await store.record_session(session_id)
+
+    async def get_session_count(self) -> int:
+        store = await self._ensure_connected()
+        return await store.get_session_count()
+
 
 class _DeferredSemanticCache:
     """Deferred semantic cache — wraps config for lazy async init."""
