@@ -77,6 +77,26 @@ class TestLearningStoreImports:
 
         assert hasattr(LearningStore, "reset_regret_streak")
 
+    def test_protocol_has_record_session(self) -> None:
+        from token_sieve.domain.ports_learning import LearningStore
+
+        assert hasattr(LearningStore, "record_session")
+
+    def test_protocol_has_get_session_count(self) -> None:
+        from token_sieve.domain.ports_learning import LearningStore
+
+        assert hasattr(LearningStore, "get_session_count")
+
+    def test_protocol_has_record_tool_session_call(self) -> None:
+        from token_sieve.domain.ports_learning import LearningStore
+
+        assert hasattr(LearningStore, "record_tool_session_call")
+
+    def test_protocol_has_get_tool_usage_in_recent_sessions(self) -> None:
+        from token_sieve.domain.ports_learning import LearningStore
+
+        assert hasattr(LearningStore, "get_tool_usage_in_recent_sessions")
+
 
 class TestLearningTypesImports:
     """ToolUsageRecord and CooccurrenceRecord are importable frozen dataclasses."""

@@ -122,3 +122,23 @@ class LearningStore(Protocol):
     async def get_suggestion_candidates(self, session_id: str) -> list[dict]:
         """Get CLAUDE.md suggestion candidates based on session patterns."""
         ...
+
+    async def record_session(self, session_id: str) -> None:
+        """Record a session start. Idempotent on duplicate session_id."""
+        ...
+
+    async def get_session_count(self) -> int:
+        """Return count of distinct recorded sessions."""
+        ...
+
+    async def record_tool_session_call(
+        self, tool_name: str, session_id: str, server_id: str
+    ) -> None:
+        """Increment per-session call count for a tool."""
+        ...
+
+    async def get_tool_usage_in_recent_sessions(
+        self, tool_name: str, last_n: int
+    ) -> int:
+        """Return total call count for tool across last N sessions."""
+        ...
