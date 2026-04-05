@@ -150,3 +150,61 @@ class TestSetupInstallHooksFlag:
         assert settings_path.exists()
         data = json.loads(settings_path.read_text())
         assert "hooks" in data
+
+
+class TestSettingsJsonSafety:
+    """H4+H5+M7: Settings.json safety fixes."""
+
+    def test_malformed_json_raises_error(self, tmp_path: Path) -> None:
+        """H4: Malformed settings.json must raise an error, not silently replace."""
+        from token_sieve.cli.setup import install_hooks
+
+        settings_path = tmp_path / "settings.json"
+        settings_path.write_text('{"hooks": {}, "important": true,}')  # trailing comma
+
+        with pytest.raises((json.JSONDecodeError, ValueError)):
+            install_hooks(settings_path)
+
+        # Original file should be untouched
+        assert settings_path.read_text() == '{"hooks": {}, "important": true,}'
+
+    def test_backup_created_before_modification(self, tmp_path: Path) -> None:
+        """H5: backup_config() must be called before modifying settings.json."""
+        from token_sieve.cli.setup import install_hooks
+
+        settings_path = tmp_path / "settings.json"
+        original_data = {"existing_setting": True, "hooks": {}}
+        settings_path.write_text(json.dumps(original_data))
+
+        install_hooks(settings_path)
+
+        backup_path = settings_path.with_suffix(".json.backup")
+        assert backup_path.exists(), "No backup created before modification"
+        backup_data = json.loads(backup_path.read_text())
+        assert backup_data["existing_setting"] is True
+
+    def test_undo_flag_passed_through_run_setup(self, tmp_path: Path, monkeypatch) -> None:
+        """M7: --undo --install-hooks must remove hooks, not install them."""
+        from token_sieve.cli.setup import install_hooks, run_setup
+
+        settings_path = tmp_path / "settings.json"
+        monkeypatch.setenv("TOKEN_SIEVE_SETTINGS_PATH", str(settings_path))
+
+        # Install hooks first
+        install_hooks(settings_path)
+        data = json.loads(settings_path.read_text())
+        assert len(data["hooks"]["PreToolUse"]) > 0
+
+        # Now run_setup with undo=True and install_hooks_flag=True
+        run_setup(undo=True, install_hooks_flag=True)
+
+        data = json.loads(settings_path.read_text())
+        ts_entries = [
+            e for e in data["hooks"].get("PreToolUse", [])
+            if any(
+                "token-sieve" in str(h.get("command", ""))
+                or "token_sieve" in str(h.get("command", ""))
+                for h in e.get("hooks", [])
+            )
+        ]
+        assert len(ts_entries) == 0, "Undo did not remove hooks"

@@ -416,8 +416,17 @@ def install_hooks(
     if settings_path.exists():
         try:
             data = json.loads(settings_path.read_text())
-        except (json.JSONDecodeError, OSError):
+        except json.JSONDecodeError:
+            # H4 fix: refuse to proceed on parse error instead of silently
+            # replacing all settings with an empty dict.
+            raise ValueError(
+                f"Cannot install hooks: {settings_path} contains invalid JSON. "
+                "Please fix the file manually or restore from backup."
+            )
+        except OSError:
             data = {}
+        # H5 fix: create a backup before any modification
+        backup_config(settings_path)
     else:
         data = {}
 
@@ -493,11 +502,19 @@ def run_setup(undo: bool = False, install_hooks_flag: bool = False) -> int:
             os.path.expanduser("~/.claude/settings.json"),
         )
         settings_path = Path(settings_path_str)
-        installed = install_hooks(settings_path)
-        if installed:
-            print(f"Installed {len(installed)} hook(s): {', '.join(installed)}")
+        # M7 fix: pass undo flag through to install_hooks so
+        # --undo --install-hooks actually removes hooks.
+        installed = install_hooks(settings_path, undo=undo)
+        if undo:
+            if installed:
+                print(f"Removed {len(installed)} hook(s): {', '.join(installed)}")
+            else:
+                print("No token-sieve hooks found to remove.")
         else:
-            print("All hooks already installed.")
+            if installed:
+                print(f"Installed {len(installed)} hook(s): {', '.join(installed)}")
+            else:
+                print("All hooks already installed.")
         return 0
 
     configs = discover_mcp_configs()
