@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # PreToolUse hook: Rewrite Bash commands to run through token-sieve compressor.
 # Emits hookSpecificOutput.updatedInput.command with the D1 rewrite template:
-#   TSIEV_WRAP_CMD="<ORIG>" python3 -m token_sieve.cli compress --wrap-env
+#   TSIEV_WRAP_CMD='<ORIG>' python3 -m token_sieve compress --wrap-env
+#
+# Note: the correct entrypoint is `python3 -m token_sieve compress` (via __main__.py),
+# NOT `python3 -m token_sieve.cli compress` (cli/ has no __main__.py).
 #
 # Exit 0 = allow (either rewritten or passthrough)
 # Never exits 2 (bash-edge-redirect.sh runs BEFORE this in PreToolUse list;
@@ -51,8 +54,8 @@ FLAG=$(echo "$RESULT" | tail -1)
 [ -z "$QUOTED_CMD" ] && exit 0
 
 # Build rewrite template (D1):
-#   TSIEV_WRAP_CMD=<shell-quoted-original> python3 -m token_sieve.cli compress --wrap-env
-REWRITTEN="TSIEV_WRAP_CMD=${QUOTED_CMD} python3 -m token_sieve.cli compress --wrap-env"
+#   TSIEV_WRAP_CMD=<shell-quoted-original> python3 -m token_sieve compress --wrap-env
+REWRITTEN="TSIEV_WRAP_CMD=${QUOTED_CMD} python3 -m token_sieve compress --wrap-env"
 
 # Emit hook protocol JSON to stdout (rewrite mode).
 # python3 used for reliable JSON serialization of the rewritten command string.
