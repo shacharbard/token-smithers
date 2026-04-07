@@ -140,8 +140,10 @@ class TestLearnedRuleBypass:
         monkeypatch.delenv("TSIEV_INLINE_NO_COMPRESS", raising=False)
 
         mock_result = _make_subprocess_result(stdout="passed")
-        mock_bs = AsyncMock()
+        # Use MagicMock (not AsyncMock) so is_bypassed returns a plain bool (sync)
+        mock_bs = MagicMock()
         mock_bs.is_bypassed.return_value = True
+        mock_bs.record_passive_reinforcement = AsyncMock()
 
         with patch("subprocess.run", return_value=mock_result):
             with patch.object(compress_module, "_get_ring_buffer", return_value=MagicMock()):
@@ -164,8 +166,9 @@ class TestLearnedRuleBypass:
         monkeypatch.delenv("TSIEV_INLINE_NO_COMPRESS", raising=False)
 
         mock_result = _make_subprocess_result(stdout="apiVersion: v1")
-        mock_bs = AsyncMock()
+        mock_bs = MagicMock()
         mock_bs.is_bypassed.return_value = True
+        mock_bs.record_passive_reinforcement = AsyncMock()
 
         with patch("subprocess.run", return_value=mock_result):
             with patch.object(compress_module, "_get_ring_buffer", return_value=MagicMock()):
@@ -179,14 +182,19 @@ class TestLearnedRuleBypass:
         assert "apiVersion" in captured.out
 
     def test_decayed_rule_does_not_bypass(self, capsys, monkeypatch) -> None:
-        """Decayed rule (is_active=False via is_bypassed→False) → compression runs."""
+        """Decayed rule (is_active=False via is_bypassed→False) → compression runs (not raw bypass)."""
         monkeypatch.setenv("TSIEV_WRAP_CMD", "pytest tests/stale")
         monkeypatch.delenv("NO_COMPRESS", raising=False)
         monkeypatch.delenv("TSIEV_INLINE_NO_COMPRESS", raising=False)
 
+        # Subprocess for the normal compression path
         mock_result = _make_subprocess_result(stdout="some output")
-        mock_bs = AsyncMock()
+        # Bypass store says no rule active
+        mock_bs = MagicMock()
         mock_bs.is_bypassed.return_value = False
+        # Retry detector returns False
+        mock_retry = MagicMock()
+        mock_retry.record_command.return_value = False
 
         pipeline_ran = []
 
@@ -197,7 +205,7 @@ class TestLearnedRuleBypass:
 
         with patch("subprocess.run", return_value=mock_result):
             with patch.object(compress_module, "_get_ring_buffer", return_value=MagicMock()):
-                with patch.object(compress_module, "_get_retry_detector", return_value=MagicMock(return_value=MagicMock(record_command=lambda _: False))):
+                with patch.object(compress_module, "_get_retry_detector", return_value=mock_retry):
                     with patch.object(compress_module, "_get_learning_store", return_value=None):
                         with patch.object(compress_module, "_get_bypass_store", return_value=mock_bs):
                             with patch("token_sieve.cli.main.create_pipeline") as mock_cp:
@@ -274,27 +282,23 @@ class TestFailOpenTelemetry:
     def test_fail_open_telemetry_recorded(
         self, capsys, monkeypatch
     ) -> None:
-        """Pipeline exception → raw stdout + annotation; compression_errors recorded."""
+        """Pipeline exception → raw stdout + annotation; _write_compression_error called."""
         monkeypatch.setenv("TSIEV_WRAP_CMD", "echo hello")
         monkeypatch.delenv("NO_COMPRESS", raising=False)
         monkeypatch.delenv("TSIEV_INLINE_NO_COMPRESS", raising=False)
 
         mock_result = _make_subprocess_result(stdout="hello")
-        error_rows = []
+        write_calls = []
 
-        mock_store = AsyncMock()
-        mock_store._db = AsyncMock()
+        async def fake_write_compression_error(store, adapter_name, exc_type, pattern_hash):
+            write_calls.append({"adapter_name": adapter_name, "exc_type": exc_type})
 
-        async def fake_execute(sql, params=None):
-            if "compression_errors" in sql and "INSERT" in sql:
-                error_rows.append(params)
-            return AsyncMock()
-
-        mock_store._db.execute = fake_execute
-        mock_store._db.commit = AsyncMock()
-
-        mock_bs = AsyncMock()
+        mock_bs = MagicMock()
         mock_bs.is_bypassed.return_value = False
+
+        # Make retry detector return False so we reach the pipeline
+        mock_retry = MagicMock()
+        mock_retry.record_command.return_value = False
 
         class BrokenPipeline:
             def process(self, _envelope):
@@ -302,12 +306,13 @@ class TestFailOpenTelemetry:
 
         with patch("subprocess.run", return_value=mock_result):
             with patch.object(compress_module, "_get_ring_buffer", return_value=MagicMock()):
-                with patch.object(compress_module, "_get_retry_detector", return_value=MagicMock(return_value=MagicMock(record_command=lambda _: False))):
-                    with patch.object(compress_module, "_get_learning_store", return_value=mock_store):
+                with patch.object(compress_module, "_get_retry_detector", return_value=mock_retry):
+                    with patch.object(compress_module, "_get_learning_store", return_value=MagicMock()):
                         with patch.object(compress_module, "_get_bypass_store", return_value=mock_bs):
-                            with patch("token_sieve.cli.main.create_pipeline") as mock_cp:
-                                mock_cp.return_value = (BrokenPipeline(), MagicMock())
-                                rc = compress_module.run([])
+                            with patch.object(compress_module, "_write_compression_error", side_effect=fake_write_compression_error):
+                                with patch("token_sieve.cli.main.create_pipeline") as mock_cp:
+                                    mock_cp.return_value = (BrokenPipeline(), MagicMock())
+                                    rc = compress_module.run([])
 
         captured = capsys.readouterr()
         assert rc == 0
@@ -315,4 +320,5 @@ class TestFailOpenTelemetry:
         # Fail-open annotation on stderr
         assert "compression failed" in captured.err
         # compression_errors telemetry should be recorded
-        assert error_rows, "Should record compression_errors row on pipeline exception"
+        assert write_calls, "Should call _write_compression_error on pipeline exception"
+        assert write_calls[0]["exc_type"] == "RuntimeError"
