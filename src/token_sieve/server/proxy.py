@@ -826,6 +826,11 @@ class ProxyServer:
                 )
         finally:
             self._pipeline.cleanup()
+            if self._metrics_writer is not None:
+                try:
+                    self._metrics_writer.flush()
+                except Exception:
+                    pass  # best-effort: never mask shutdown errors
 
     # Adapter name -> (module_path, class_name) registry
     _ADAPTER_REGISTRY: dict[str, tuple[str, str]] = {
