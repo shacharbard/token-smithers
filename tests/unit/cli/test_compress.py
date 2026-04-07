@@ -315,10 +315,8 @@ class TestRetryBypass:
         import asyncio
         from token_sieve.adapters.learning.sqlite_store import SQLiteLearningStore
 
-        # Create a real in-memory DB and inject it
-        store = asyncio.get_event_loop().run_until_complete(
-            SQLiteLearningStore.connect(":memory:")
-        )
+        # Create a real in-memory DB and inject it (use asyncio.run for Python 3.10+)
+        store = asyncio.run(SQLiteLearningStore.connect(":memory:"))
 
         import token_sieve.cli.compress as cm
 
@@ -332,9 +330,7 @@ class TestRetryBypass:
 
         run_compress([])
 
-        count = asyncio.get_event_loop().run_until_complete(
-            _count_retry_events(store)
-        )
+        count = asyncio.run(_count_retry_events(store))
         assert count >= 1, "retry_events row must be written on retry"
 
     def test_shadow_logger_called_with_is_retry_true_on_retry(
@@ -410,12 +406,15 @@ class TestShadowLoggerWiring:
                 pass
 
         monkeypatch.setattr(cm, "_get_retry_detector", lambda: NeverRetryDetector())
-        monkeypatch.setenv("TSIEV_WRAP_CMD", "bash -c 'echo DETERMINISM_CHECK'")
 
+        # Run 1 — noop shadow
+        monkeypatch.setenv("TSIEV_WRAP_CMD", "bash -c 'echo DETERMINISM_CHECK'")
         monkeypatch.setattr(cm, "_get_shadow_logger", lambda: NoopShadowLogger())
         run_compress([])
         captured1 = capsys.readouterr()
 
+        # Run 2 — sampled shadow (must re-set env var since it was popped)
+        monkeypatch.setenv("TSIEV_WRAP_CMD", "bash -c 'echo DETERMINISM_CHECK'")
         monkeypatch.setattr(cm, "_get_shadow_logger", lambda: SampledShadowLogger())
         run_compress([])
         captured2 = capsys.readouterr()
