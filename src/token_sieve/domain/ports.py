@@ -18,7 +18,17 @@ class CompressionStrategy(Protocol):
     """Interface for content compression adapters.
 
     Each strategy handles specific content types and returns a compressed envelope.
+
+    The ``deterministic`` flag (D4b) signals whether two calls to ``compress``
+    on byte-identical input must produce byte-identical output. The default is
+    ``True`` — adapters that legitimately cannot guarantee byte-equality (e.g.,
+    embed a wall-clock timestamp, iterate over a hash-randomized set) MUST set
+    ``deterministic = False`` at class level so audit tooling can exempt them.
+    Phase 10 will fork code paths on this flag (e.g., bypass caching for
+    non-deterministic adapters).
     """
+
+    deterministic: bool = True
 
     def can_handle(self, envelope: ContentEnvelope) -> bool:
         """Whether this strategy can compress the given envelope."""
