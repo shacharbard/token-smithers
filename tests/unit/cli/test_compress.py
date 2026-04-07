@@ -187,3 +187,89 @@ class TestStderrOverrideAllowlist:
         assert rc == 0
         # mycargo is NOT in the allowlist → stderr still passes through raw
         assert "MY_ERR" in captured.err
+
+
+class TestFailOpen:
+    """Fail-open annotation + ring buffer wiring — Task 4 tests (D5a, D5b)."""
+
+    def test_fail_open_emits_raw_on_pipeline_exception(self, monkeypatch, capsys):
+        """When pipeline raises, run() emits raw stdout and annotation on stderr."""
+        monkeypatch.setenv("TSIEV_WRAP_CMD", "bash -c 'echo RAWOUT'")
+
+        from token_sieve.domain.pipeline import CompressionPipeline
+
+        def boom(self_arg, envelope):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(CompressionPipeline, "process", boom)
+
+        rc = run_compress([])
+        captured = capsys.readouterr()
+
+        assert rc == 0  # subprocess exit code preserved
+        assert "RAWOUT" in captured.out
+        assert "[token-sieve: compression failed (RuntimeError: boom)" in captured.err
+        assert "please report" in captured.err
+
+    def test_fail_open_preserves_subprocess_returncode(self, monkeypatch, capsys):
+        """When pipeline raises, the subprocess exit code is still propagated."""
+        monkeypatch.setenv("TSIEV_WRAP_CMD", "bash -c 'echo X; exit 7'")
+
+        from token_sieve.domain.pipeline import CompressionPipeline
+
+        def boom(self_arg, envelope):
+            raise RuntimeError("forced")
+
+        monkeypatch.setattr(CompressionPipeline, "process", boom)
+
+        rc = run_compress([])
+        assert rc == 7
+
+    def test_ring_buffer_records_raw_before_compression(self, monkeypatch, capsys):
+        """RingBuffer.append is called once with raw stdout before pipeline runs."""
+        monkeypatch.setenv("TSIEV_WRAP_CMD", "bash -c 'echo HELLO'")
+
+        appended: list[str] = []
+
+        class FakeRingBuffer:
+            def __init__(self, session_id, **kwargs):
+                pass
+
+            def append(self, raw: str) -> None:
+                appended.append(raw)
+
+        # Patch _get_ring_buffer in compress module so the lazy import returns our fake
+        import token_sieve.cli.compress as cm
+
+        def fake_get_ring_buffer():
+            return FakeRingBuffer(session_id="test")
+
+        monkeypatch.setattr(cm, "_get_ring_buffer", fake_get_ring_buffer)
+
+        run_compress([])
+        assert len(appended) == 1
+        assert "HELLO" in appended[0]
+
+    def test_ring_buffer_failure_does_not_break_compression(self, monkeypatch, capsys):
+        """OSError in RingBuffer.append must not break compression output."""
+        monkeypatch.setenv("TSIEV_WRAP_CMD", "bash -c 'echo SAFE'")
+
+        class BrokenRingBuffer:
+            def __init__(self, session_id, **kwargs):
+                pass
+
+            def append(self, raw: str) -> None:
+                raise OSError("disk full")
+
+        import token_sieve.cli.compress as cm
+
+        def fake_get_ring_buffer():
+            return BrokenRingBuffer(session_id="test")
+
+        monkeypatch.setattr(cm, "_get_ring_buffer", fake_get_ring_buffer)
+
+        rc = run_compress([])
+        captured = capsys.readouterr()
+        assert rc == 0
+        # Compression must still produce output
+        assert "SAFE" in captured.out or captured.out  # passthrough at minimum
