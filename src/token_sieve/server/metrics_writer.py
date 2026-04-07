@@ -19,7 +19,7 @@ class MetricsFileWriter:
         self,
         collector: object,
         metrics_path: str,
-        flush_every_n: int = 10,
+        flush_every_n: int = 1,
     ) -> None:
         self._collector = collector
         self._metrics_path = metrics_path
