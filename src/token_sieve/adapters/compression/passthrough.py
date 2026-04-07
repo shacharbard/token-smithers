@@ -15,6 +15,8 @@ class PassthroughStrategy:
     Satisfies CompressionStrategy protocol structurally.
     """
 
+    deterministic: bool = True  # D4b: passthrough trivially preserves bytes
+
     def can_handle(self, envelope: ContentEnvelope) -> bool:
         """Accept all content types."""
         return True

@@ -1,0 +1,46 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-8.3.2, pluggy-1.5.0
+rootdir: /home/runner/work/token-sieve/token-sieve
+configfile: pyproject.toml
+collected 12 items
+
+tests/unit/adapters/compression/test_yaml_transcoder.py .....F.....F   [100%]
+
+=================================== FAILURES ===================================
+___________________ test_yaml_transcoder_preserves_unicode _____________________
+
+    def test_yaml_transcoder_preserves_unicode():
+        adapter = YamlTranscoder()
+        envelope = ContentEnvelope(content="name: Zoë\nage: 30\n", content_type=ContentType.YAML)
+        result = adapter.compress(envelope)
+>       assert "Zoë" in result.content
+E       AssertionError: assert 'Zoë' in '{"age": 30, "name": "Zo\\u00eb"}'
+
+tests/unit/adapters/compression/test_yaml_transcoder.py:48: AssertionError
+___________________ test_yaml_transcoder_handles_nested_keys ___________________
+
+    def test_yaml_transcoder_handles_nested_keys():
+        adapter = YamlTranscoder()
+        envelope = ContentEnvelope(
+            content="parent:\n  child:\n    key: value\n",
+            content_type=ContentType.YAML,
+        )
+        result = adapter.compress(envelope)
+>       assert "parent.child.key" in result.content
+E       KeyError: 'parent.child.key'
+
+tests/unit/adapters/compression/test_yaml_transcoder.py:73: KeyError: 'parent.child.key'
+
+------------------------------ Captured log call -------------------------------
+WARNING  token_sieve.adapters.compression.yaml_transcoder:yaml_transcoder.py:142 Could not flatten nested key path
+=========================== short test summary info ============================
+FAILED tests/unit/adapters/compression/test_yaml_transcoder.py::test_yaml_transcoder_preserves_unicode
+FAILED tests/unit/adapters/compression/test_yaml_transcoder.py::test_yaml_transcoder_handles_nested_keys
+========================= 2 failed, 10 passed in 0.84s =========================
+
+Traceback (most recent call last):
+  File "/home/runner/work/token-sieve/token-sieve/src/token_sieve/adapters/compression/yaml_transcoder.py", line 87, in compress
+    flattened = self._flatten(parsed)
+  File "/home/runner/work/token-sieve/token-sieve/src/token_sieve/adapters/compression/yaml_transcoder.py", line 142, in _flatten
+    raise KeyError(path)
+KeyError: 'parent.child.key'

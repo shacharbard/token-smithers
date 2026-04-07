@@ -1,0 +1,85 @@
+# Phase 09 wave 5 — D4d 4-job stratified determinism CI matrix.
+#
+# 3 "full suite" lanes verify the codebase passes on the canonical platforms
+# (Linux+macOS, Python 3.11+3.12) under LC_ALL=C — the locale Token Smithers
+# normalizes its CLI internals to.
+#
+# 1 "locale canary" lane runs only the determinism-critical subset under a
+# non-C locale (de_DE.UTF-8) so any locale-leakage regression in compression
+# adapters or CLI formatting fails fast.
+name: ci
+
+on:
+  push:
+    branches: [main, stable]
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # D4d lane 1: Linux 3.12 baseline (full suite, C locale).
+          - name: linux-3.12-c
+            os: ubuntu-latest
+            python: "3.12"
+            LC_ALL: C
+            scope: full
+          # D4d lane 2: Linux 3.11 floor (full suite, C locale).
+          - name: linux-3.11-c
+            os: ubuntu-latest
+            python: "3.11"
+            LC_ALL: C
+            scope: full
+          # D4d lane 3: macOS 3.12 (full suite, C locale).
+          - name: macos-3.12-c
+            os: macos-latest
+            python: "3.12"
+            LC_ALL: C
+            scope: full
+          # D4d lane 4: locale canary — runs only the determinism subset under
+          # a non-C locale so any leakage of locale-dependent formatting into
+          # compressed output is caught immediately.
+          - name: linux-3.12-locale
+            os: ubuntu-latest
+            python: "3.12"
+            LC_ALL: de_DE.UTF-8
+            scope: determinism-only
+    env:
+      LC_ALL: ${{ matrix.LC_ALL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install de_DE.UTF-8 locale (Linux only, locale lane)
+        if: matrix.LC_ALL == 'de_DE.UTF-8' && runner.os == 'Linux'
+        run: |
+          sudo locale-gen de_DE.UTF-8
+          sudo update-locale
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run full test suite
+        if: matrix.scope == 'full'
+        run: pytest tests/unit/ -q
+
+      - name: Run determinism subset
+        if: matrix.scope == 'determinism-only'
+        run: |
+          pytest \
+            tests/unit/test_canary_determinism.py \
+            tests/unit/adapters/compression/test_adapter_audit_determinism.py \
+            tests/unit/adapters/compression/test_determinism.py \
+            tests/unit/cli/test_compress_locale.py \
+            tests/unit/test_ci_yaml_valid.py \
+            -v

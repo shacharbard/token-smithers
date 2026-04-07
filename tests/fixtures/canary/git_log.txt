@@ -1,0 +1,51 @@
+5c1a0a9 fix(08-review): CLI + misc fixes — session lifecycle, generic hint, constant
+9ba66aa fix(08-review): visibility stats + cache fixes (M1, M2, M3, M4)
+9794fc8 fix(08-review): SQLite schema fixes — dedupe migration, FK, guard, index
+bb554ea fix(08-review): synthetic tool safety — filter gate, collision check
+a6e3a64 fix(08-review): wire VisibilityController in factory + use frequency_threshold
+1c9b1a4 merge(09-04): Auto-Learn Bypass + Sensitive Denylist (D5c — 4-layer escape hatch)
+2e88a01 feat(09-04): GREEN — wire D5c bypass layers into compress.py
+b1d3f02 test(09-04): RED — add bypass layer integration tests
+9d4a778 feat(09-04): GREEN — add SensitiveDenylist with built-in patterns
+fa1c5fc test(09-04): RED — add SensitiveDenylist matcher tests
+3f72b1a feat(09-04): GREEN — add BypassStore.is_bypassed and record_inline_bypass
+0b9c89a test(09-04): RED — add BypassStore tests
+e21fa30 chore(09-04): schema v7 migration for bypass_rules table
+4dd2887 merge(09-03): Retry Detection + Shadow Mode (D2/D3)
+e8f3aa5 feat(09-03): GREEN — wire ShadowLogger sampling into compress.py
+9a0c0c5 test(09-03): RED — add shadow logging integration tests
+0c3b9bb feat(09-03): GREEN — implement adaptive sampling rate logic
+3e1e7e5 test(09-03): RED — add ShadowLogger contract tests
+9d8b6cc feat(09-03): GREEN — add RetryDetector with sliding window dedupe
+3b40e87 test(09-03): RED — add RetryDetector pattern hash tests
+b39e2bd chore(09-03): schema v6 migration for retry_events + shadow_log tables
+9d0a5e7 merge(09-02): PreToolUse Hooks (Bash + WebFetch redirect)
+71f47ab feat(09-02): GREEN — install_hooks() registers compress + webfetch hooks
+b95c6b8 test(09-02): RED — add hook installer tests
+e7eedc8 feat(09-02): GREEN — add bash-compress-rewrite.sh hook
+2bd0b2e test(09-02): RED — add bash hook contract tests
+ff5ddf3 feat(09-02): GREEN — add webfetch-redirect.sh hook
+20cdd5b test(09-02): RED — add webfetch hook tests
+1ce7d09 merge(09-01): CLI Compressor Foundation
+def0a37 feat(09-01): GREEN — add token-sieve compress subcommand to main CLI
+8a3eebd test(09-01): RED — add compress CLI integration tests
+fbcaeae feat(09-01): GREEN — add RingBuffer with mmap-backed circular write
+a4ec1da test(09-01): RED — add RingBuffer contract tests
+1f4d2ce feat(09-01): GREEN — add zstandard core dep + cli/compress.py scaffold
+b5a4ed1 test(09-01): RED — add CLI compress entry-point smoke test
+4c40dc9 chore: bump version to 0.9.0-dev
+38b1eda docs: phase 9 plan-of-record
+2b6f1f8 chore: tighten ruff config — enable BLE001
+ec5cb83 fix(simplify-results): extract _json_utils, dedupe sort logic
+bb33fd1 refactor(simplify-results): consolidate sentence scorer + bm25 selector
+8c4f5c1 feat(adversarial): add red-team review skill
+1eaadd5 chore: rename PassthroughCompressor → PassthroughStrategy
+1cb50e6 fix: rerank_pipeline pre-existing test failure investigation
+58fbe79 docs: refresh PATTERNS.md with phase 8 patterns
+8da4faa fix(08): visibility controller pre-warmer race
+3a3779b feat(08): adaptive cache eviction with LFU + recency
+9b1aa39 test(08): RED — adaptive eviction contract tests
+1f5b0e1 feat(08): add VisibilityController.warm_session
+7e1ce84 test(08): RED — visibility controller warm tests
+44c11e4 chore: enable strict mypy on domain layer
+0d1cc35 fix: BM25 selector tokenizer normalization

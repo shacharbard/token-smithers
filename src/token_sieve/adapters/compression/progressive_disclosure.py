@@ -31,6 +31,9 @@ class ProgressiveDisclosureStrategy:
         output_dir: Directory for temp files (default: system temp dir).
     """
 
+    # D4b audit: embeds a per-call tempfile path → varies across runs by design.
+    deterministic = False  # embeds tempfile path
+
     def __init__(
         self,
         threshold_tokens: int = 10000,

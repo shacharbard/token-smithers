@@ -1,0 +1,125 @@
+{
+  "adapters": [
+    {
+      "description": "no-op compression",
+      "deterministic": true,
+      "name": "PassthroughStrategy"
+    },
+    {
+      "description": "collapses whitespace",
+      "deterministic": true,
+      "name": "WhitespaceNormalizer"
+    },
+    {
+      "description": "removes null JSON fields",
+      "deterministic": true,
+      "name": "NullFieldElider"
+    },
+    {
+      "description": "YAML to JSON canonical",
+      "deterministic": true,
+      "name": "YamlTranscoder"
+    },
+    {
+      "description": "normalizes timestamps",
+      "deterministic": true,
+      "name": "TimestampNormalizer"
+    },
+    {
+      "description": "aliases long keys",
+      "deterministic": true,
+      "name": "KeyAliasingStrategy"
+    },
+    {
+      "description": "dedupes path prefixes",
+      "deterministic": true,
+      "name": "PathPrefixDeduplicator"
+    },
+    {
+      "description": "encodes graphs",
+      "deterministic": true,
+      "name": "GraphAdjacencyEncoder"
+    },
+    {
+      "description": "RLE encoding",
+      "deterministic": true,
+      "name": "RunLengthEncoder"
+    },
+    {
+      "description": "simple truncation",
+      "deterministic": true,
+      "name": "TruncationCompressor"
+    },
+    {
+      "description": "context-aware truncation",
+      "deterministic": true,
+      "name": "SmartTruncation"
+    },
+    {
+      "description": "size-based gate",
+      "deterministic": true,
+      "name": "SizeGate"
+    },
+    {
+      "description": "strips code comments",
+      "deterministic": true,
+      "name": "CodeCommentStripper"
+    },
+    {
+      "description": "compresses error stacks",
+      "deterministic": true,
+      "name": "ErrorStackCompressor"
+    },
+    {
+      "description": "redirects to file",
+      "deterministic": true,
+      "name": "FileRedirectStrategy"
+    },
+    {
+      "description": "progressive disclosure",
+      "deterministic": true,
+      "name": "ProgressiveDisclosureStrategy"
+    },
+    {
+      "description": "semantic diff",
+      "deterministic": true,
+      "name": "SemanticDiffStrategy"
+    },
+    {
+      "description": "BM25 scoring",
+      "deterministic": true,
+      "name": "SentenceScorer"
+    },
+    {
+      "description": "TOON encoding",
+      "deterministic": true,
+      "name": "ToonCompressor"
+    },
+    {
+      "description": "AST skeleton",
+      "deterministic": true,
+      "name": "ASTSkeletonExtractor"
+    },
+    {
+      "description": "unwraps JSON code",
+      "deterministic": true,
+      "name": "JsonCodeUnwrapper"
+    },
+    {
+      "description": "filters by log level",
+      "deterministic": true,
+      "name": "LogLevelFilter"
+    }
+  ],
+  "metadata": {
+    "created_at": "2026-04-07T00:00:00Z",
+    "fixture_size_kb": 5,
+    "notes": "Pretty-printed JSON with stable key ordering for canary determinism check",
+    "task_id": "phase-09-wave-5-canary-fixture",
+    "tool_version": "0.9.0-dev"
+  },
+  "phase": "09-output-compression",
+  "plan": "09-05",
+  "repository": "token-sieve",
+  "wave": 5
+}
