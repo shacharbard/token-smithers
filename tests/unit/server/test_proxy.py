@@ -992,6 +992,103 @@ class TestProxyRunCleanup:
         pipeline.cleanup.assert_called_once()
 
 
+class TestProxyRunShutdown:
+    """P05-T1: ProxyServer.run() must flush metrics_writer in finally block."""
+
+    @pytest.mark.asyncio
+    async def test_run_flushes_metrics_writer_on_normal_exit(self) -> None:
+        """On normal exit, metrics_writer.flush() must be called exactly once."""
+        from token_sieve.server.proxy import ProxyServer
+        from unittest.mock import patch
+
+        metrics_writer = MagicMock()
+        metrics_writer.flush = MagicMock()
+
+        proxy = ProxyServer(
+            backend_connector=_make_fake_connector(),
+            tool_filter=_make_fake_filter(),
+            pipeline=_make_fake_pipeline(),
+            metrics_sink=_make_fake_sink(),
+            metrics_writer=metrics_writer,
+        )
+
+        class _FakeCtx:
+            async def __aenter__(self):
+                return (AsyncMock(), AsyncMock())
+
+            async def __aexit__(self, *args):
+                pass
+
+        with patch("mcp.server.stdio.stdio_server", return_value=_FakeCtx()):
+            with patch.object(proxy._server, "run", new_callable=AsyncMock):
+                await proxy.run()
+
+        metrics_writer.flush.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_run_flushes_metrics_writer_on_exception_path(self) -> None:
+        """On exception, metrics_writer.flush() must still be called and the exception re-raised."""
+        from token_sieve.server.proxy import ProxyServer
+        from unittest.mock import patch
+
+        metrics_writer = MagicMock()
+        metrics_writer.flush = MagicMock()
+
+        proxy = ProxyServer(
+            backend_connector=_make_fake_connector(),
+            tool_filter=_make_fake_filter(),
+            pipeline=_make_fake_pipeline(),
+            metrics_sink=_make_fake_sink(),
+            metrics_writer=metrics_writer,
+        )
+
+        class _FakeCtx:
+            async def __aenter__(self):
+                return (AsyncMock(), AsyncMock())
+
+            async def __aexit__(self, *args):
+                pass
+
+        boom = AsyncMock(side_effect=RuntimeError("boom"))
+        with patch("mcp.server.stdio.stdio_server", return_value=_FakeCtx()):
+            with patch.object(proxy._server, "run", boom):
+                with pytest.raises(RuntimeError, match="boom"):
+                    await proxy.run()
+
+        metrics_writer.flush.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_run_swallows_flush_errors(self) -> None:
+        """A flush() that raises must not mask shutdown — proxy.run() completes."""
+        from token_sieve.server.proxy import ProxyServer
+        from unittest.mock import patch
+
+        metrics_writer = MagicMock()
+        metrics_writer.flush = MagicMock(side_effect=OSError("disk full"))
+
+        proxy = ProxyServer(
+            backend_connector=_make_fake_connector(),
+            tool_filter=_make_fake_filter(),
+            pipeline=_make_fake_pipeline(),
+            metrics_sink=_make_fake_sink(),
+            metrics_writer=metrics_writer,
+        )
+
+        class _FakeCtx:
+            async def __aenter__(self):
+                return (AsyncMock(), AsyncMock())
+
+            async def __aexit__(self, *args):
+                pass
+
+        with patch("mcp.server.stdio.stdio_server", return_value=_FakeCtx()):
+            with patch.object(proxy._server, "run", new_callable=AsyncMock):
+                # Must not raise
+                await proxy.run()
+
+        metrics_writer.flush.assert_called_once()
+
+
 class TestCacheableAllowlist:
     """Item 1: Semantic cache should only be used for known-safe (read-only) tools."""
 
