@@ -82,3 +82,108 @@ class TestMainDispatchesToCompress:
         monkeypatch.setenv("TSIEV_WRAP_CMD", "true")
         rc = main(["compress"])
         assert rc == 0
+
+
+class TestStderrOverrideAllowlist:
+    """Per-command stderr merge allowlist (D1c) — Task 3 tests.
+
+    For allowlisted binaries, stderr is merged into the compression input.
+    For unknown binaries, stderr passes through raw.
+    Only the first shell word (literal match) triggers the merge.
+    """
+
+    def _run_with_cmd(self, monkeypatch, capsys, cmd: str) -> tuple[int, str, str]:
+        monkeypatch.setenv("TSIEV_WRAP_CMD", cmd)
+        rc = run_compress([])
+        captured = capsys.readouterr()
+        return rc, captured.out, captured.err
+
+    def test_stderr_override_cargo(self, monkeypatch, capsys):
+        """cargo: stderr merged into compression input, raw stderr is empty."""
+        monkeypatch.setenv("TSIEV_WRAP_CMD", "bash -c 'echo OUT; echo CARGO_ERR >&2'")
+        # Monkeypatch first word to simulate 'cargo' as the command
+        import token_sieve.cli.compress as cm
+        original_allowlist = cm._STDERR_MERGE_ALLOWLIST
+        # Patch shlex to return 'cargo' as first word for this test
+        import shlex as shlex_mod
+        original_split = shlex_mod.split
+
+        def fake_split(cmd, *args, **kwargs):
+            result = original_split(cmd, *args, **kwargs)
+            # Replace 'bash' with 'cargo' in position 0 for the merge check
+            if result and result[0] == "bash":
+                return ["cargo"] + result[1:]
+            return result
+
+        monkeypatch.setattr(shlex_mod, "split", fake_split)
+
+        rc, out, err = self._run_with_cmd(monkeypatch, capsys,
+                                          "bash -c 'echo OUT; echo CARGO_ERR >&2'")
+        assert rc == 0
+        # stderr should be empty (merged) and output should contain CARGO_ERR
+        assert "CARGO_ERR" not in err
+        # The merged content went through pipeline so it appears in stdout
+        assert "CARGO_ERR" in out or "OUT" in out
+
+    def test_stderr_override_docker(self, monkeypatch, capsys):
+        """docker: stderr merged into compression input."""
+        import shlex as shlex_mod
+        original_split = shlex_mod.split
+
+        def fake_split(cmd, *args, **kwargs):
+            result = original_split(cmd, *args, **kwargs)
+            if result and result[0] == "bash":
+                return ["docker"] + result[1:]
+            return result
+
+        monkeypatch.setattr(shlex_mod, "split", fake_split)
+        monkeypatch.setenv("TSIEV_WRAP_CMD", "bash -c 'echo OUT; echo DOCKER_ERR >&2'")
+        rc = run_compress([])
+        captured = capsys.readouterr()
+        assert rc == 0
+        assert "DOCKER_ERR" not in captured.err
+
+    def test_stderr_override_webpack(self, monkeypatch, capsys):
+        """webpack: stderr merged into compression input."""
+        import shlex as shlex_mod
+        original_split = shlex_mod.split
+
+        def fake_split(cmd, *args, **kwargs):
+            result = original_split(cmd, *args, **kwargs)
+            if result and result[0] == "bash":
+                return ["webpack"] + result[1:]
+            return result
+
+        monkeypatch.setattr(shlex_mod, "split", fake_split)
+        monkeypatch.setenv("TSIEV_WRAP_CMD", "bash -c 'echo OUT; echo WEBPACK_ERR >&2'")
+        rc = run_compress([])
+        captured = capsys.readouterr()
+        assert rc == 0
+        assert "WEBPACK_ERR" not in captured.err
+
+    def test_stderr_passthrough_for_unknown_binary(self, monkeypatch, capsys):
+        """pytest (unknown): stderr passes through raw."""
+        monkeypatch.setenv("TSIEV_WRAP_CMD", "bash -c 'echo OUT; echo PYTEST_ERR >&2'")
+        rc = run_compress([])
+        captured = capsys.readouterr()
+        assert rc == 0
+        assert "PYTEST_ERR" in captured.err
+
+    def test_override_allowlist_is_first_word_match_only(self, monkeypatch, capsys):
+        """mycargo does NOT trigger the merge (only exact first-word match)."""
+        import shlex as shlex_mod
+        original_split = shlex_mod.split
+
+        def fake_split(cmd, *args, **kwargs):
+            result = original_split(cmd, *args, **kwargs)
+            if result and result[0] == "bash":
+                return ["mycargo"] + result[1:]
+            return result
+
+        monkeypatch.setattr(shlex_mod, "split", fake_split)
+        monkeypatch.setenv("TSIEV_WRAP_CMD", "bash -c 'echo OUT; echo MY_ERR >&2'")
+        rc = run_compress([])
+        captured = capsys.readouterr()
+        assert rc == 0
+        # mycargo is NOT in the allowlist → stderr still passes through raw
+        assert "MY_ERR" in captured.err
