@@ -17,7 +17,11 @@ class TestV5Migration:
 
     @pytest.fixture()
     async def store(self):
-        return await SQLiteLearningStore.connect(":memory:")
+        s = await SQLiteLearningStore.connect(":memory:")
+        try:
+            yield s
+        finally:
+            await s.close()
 
     async def _get_table_columns(self, store, table_name: str) -> list[str]:
         """Return column names for a given table."""
@@ -102,6 +106,9 @@ class TestV5Migration:
                 (now, now),
             )
             await store._db.commit()
+        # Roll back the aborted transaction so the connection's teardown does
+        # not deadlock on connection cleanup at fixture exit.
+        await store._db.rollback()
 
     async def test_v5_idempotent(self) -> None:
         """Connecting twice to the same file-backed db must not raise."""
