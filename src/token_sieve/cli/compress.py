@@ -19,6 +19,7 @@ Escape hatches (D2f):
 from __future__ import annotations
 
 import asyncio
+import locale
 import logging
 import os
 import shlex
@@ -212,6 +213,16 @@ def run(argv: list[str]) -> int:
     Returns:
         The wrapped subprocess returncode.
     """
+    # D4d: force the C locale for the CLI's OWN Python formatting so that any
+    # number/date conversion that ends up in compressed output is locale-stable.
+    # This intentionally does NOT mutate os.environ — the wrapped user
+    # subprocess (built from a snapshot of os.environ further below) keeps the
+    # user's original LANG/LC_ALL.
+    try:
+        locale.setlocale(locale.LC_ALL, "C")
+    except locale.Error:  # pragma: no cover — C locale should always be available
+        logger.debug("token_sieve: could not switch internal locale to C")
+
     cmd = os.environ.pop("TSIEV_WRAP_CMD", None)
     if not cmd:
         print("Error: TSIEV_WRAP_CMD is not set", file=sys.stderr)
