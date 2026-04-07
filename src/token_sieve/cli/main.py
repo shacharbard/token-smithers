@@ -407,6 +407,11 @@ def main(argv: list[str] | None = None) -> int:
 
         return _run_compress(effective_argv[1:])
 
+    if effective_argv and effective_argv[0] == "recall":
+        from token_sieve.cli.recall import run as _run_recall
+
+        return _run_recall(effective_argv[1:])
+
     if effective_argv and effective_argv[0] == "stats":
         full = "--full" in effective_argv
         return _run_stats(full=full)
