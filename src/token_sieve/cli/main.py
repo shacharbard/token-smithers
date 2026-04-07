@@ -402,6 +402,11 @@ def main(argv: list[str] | None = None) -> int:
     """
     # Check for stats subcommand before argparse (avoids positional conflict)
     effective_argv = argv if argv is not None else sys.argv[1:]
+    if effective_argv and effective_argv[0] == "compress":
+        from token_sieve.cli.compress import run as _run_compress
+
+        return _run_compress(effective_argv[1:])
+
     if effective_argv and effective_argv[0] == "stats":
         full = "--full" in effective_argv
         return _run_stats(full=full)
