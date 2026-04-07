@@ -532,16 +532,7 @@ def install_hooks(
         # D11 ordering: if _after_script specified, insert after that entry.
         after_script = script_entry.get("_after_script")
         if after_script:
-            after_idx = next(
-                (i for i, e in enumerate(existing)
-                 if any(after_script in str(h.get("command", ""))
-                        for h in e.get("hooks", []))),
-                None,
-            )
-            if after_idx is not None:
-                existing.insert(after_idx + 1, clean_entry)
-            else:
-                existing.append(clean_entry)
+            _insert_after_marker(existing, clean_entry, after_script)
         else:
             existing.append(clean_entry)
 
@@ -549,6 +540,27 @@ def install_hooks(
 
     _atomic_write(settings_path, data)
     return installed
+
+
+def _insert_after_marker(
+    entries: list[dict], new_entry: dict, after_marker_substring: str
+) -> None:
+    """Insert new_entry into entries immediately after the first entry whose
+    hook command contains after_marker_substring.  If no such entry exists,
+    append at the end.
+
+    Mutates entries in-place.
+    """
+    after_idx = next(
+        (i for i, e in enumerate(entries)
+         if any(after_marker_substring in str(h.get("command", ""))
+                for h in e.get("hooks", []))),
+        None,
+    )
+    if after_idx is not None:
+        entries.insert(after_idx + 1, new_entry)
+    else:
+        entries.append(new_entry)
 
 
 def _atomic_write(path: Path, data: dict) -> None:
