@@ -1,0 +1,53 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-8.3.2, pluggy-1.5.0
+rootdir: /home/runner/work/token-sieve/token-sieve
+configfile: pyproject.toml
+plugins: anyio-4.4.0, asyncio-0.23.8, cov-5.0.0, mock-3.14.0, hypothesis-6.108.5
+asyncio: mode=Mode.STRICT
+collected 412 items
+
+tests/unit/adapters/cache/test_call_cache.py ..........              [  2%]
+tests/unit/adapters/cache/test_param_normalizer.py ............      [  5%]
+tests/unit/adapters/cache/test_schema_cache.py ..........            [  7%]
+tests/unit/adapters/cache/test_semantic_cache.py ........            [  9%]
+tests/unit/adapters/compression/test_ast_skeleton.py ..........      [ 12%]
+tests/unit/adapters/compression/test_bm25_sentence_selector.py ..    [ 13%]
+tests/unit/adapters/compression/test_code_comment_stripper.py ....   [ 14%]
+tests/unit/adapters/compression/test_error_stack_compressor.py ..    [ 15%]
+tests/unit/adapters/compression/test_file_redirect.py ..........     [ 17%]
+tests/unit/adapters/compression/test_graph_encoder.py ..........     [ 19%]
+tests/unit/adapters/compression/test_json_code_unwrapper.py ......   [ 21%]
+tests/unit/adapters/compression/test_key_aliasing.py ..........      [ 23%]
+tests/unit/adapters/compression/test_log_level_filter.py ........    [ 25%]
+tests/unit/adapters/compression/test_null_field_elider.py .......    [ 27%]
+tests/unit/adapters/compression/test_passthrough.py ..               [ 28%]
+tests/unit/adapters/compression/test_path_prefix_deduplicator.py ... [ 29%]
+tests/unit/adapters/compression/test_progressive_disclosure.py ..... [ 31%]
+tests/unit/adapters/compression/test_rle_encoder.py ........         [ 33%]
+tests/unit/adapters/compression/test_semantic_diff.py .........      [ 35%]
+tests/unit/adapters/compression/test_sentence_scorer.py ......       [ 36%]
+tests/unit/adapters/compression/test_size_gate.py ......             [ 38%]
+tests/unit/adapters/compression/test_smart_truncation.py ........    [ 40%]
+tests/unit/adapters/compression/test_summary_marker.py ...           [ 41%]
+tests/unit/adapters/compression/test_test_output_compressor.py ..... [ 43%]
+tests/unit/adapters/compression/test_timestamp_normalizer.py .....   [ 44%]
+tests/unit/adapters/compression/test_toon_compressor.py .........    [ 47%]
+tests/unit/adapters/compression/test_truncation.py .........         [ 49%]
+tests/unit/adapters/compression/test_whitespace_normalizer.py .....  [ 50%]
+tests/unit/adapters/compression/test_yaml_transcoder.py .........    [ 52%]
+tests/unit/cli/test_compress.py ..............                       [ 56%]
+tests/unit/cli/test_main.py .........                                [ 58%]
+tests/unit/config/test_loader.py ............                        [ 61%]
+tests/unit/domain/test_model.py ............                         [ 63%]
+tests/unit/domain/test_pipeline.py ..............                    [ 67%]
+tests/unit/domain/test_session.py ........                           [ 69%]
+tests/unit/server/test_proxy.py .............                        [ 73%]
+tests/unit/server/test_metrics_writer.py ..........                  [ 75%]
+tests/unit/test_canary_determinism.py .....                          [ 76%]
+tests/integration/test_mcp_roundtrip.py ........                     [ 78%]
+tests/integration/test_phase07_integration.py ..............         [ 82%]
+tests/integration/test_proxy_phase04.py ............                 [ 85%]
+tests/benchmark/test_compression_benchmark.py ......                 [ 86%]
+tests/helpers/test_fake_mcp_server.py ......                         [ 88%]
+
+======================== 412 passed in 18.43s ============================
