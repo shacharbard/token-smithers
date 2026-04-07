@@ -8,13 +8,9 @@ them back for manual inspection without needing the compressed MCP output.
 """
 from __future__ import annotations
 
-import os
 import sys
 
-
-def _session_id() -> str:
-    """Return CLAUDE_SESSION_ID env var or 'default' if unset."""
-    return os.environ.get("CLAUDE_SESSION_ID", "default")
+from token_sieve.cli._session import session_id as _session_id
 
 
 def _get_ring_buffer():

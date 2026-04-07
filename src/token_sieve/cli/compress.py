@@ -17,6 +17,8 @@ import shlex
 import subprocess
 import sys
 
+from token_sieve.cli._session import session_id as _session_id
+
 logger = logging.getLogger(__name__)
 
 # Annotation emitted to stderr when compression fails (D5a).
@@ -28,11 +30,6 @@ _FAIL_OPEN_TEMPLATE = (
 # Commands whose stderr carries structured output that benefits from compression.
 # Only the first shell word (literal match) triggers the merge.
 _STDERR_MERGE_ALLOWLIST: frozenset[str] = frozenset({"cargo", "docker", "webpack"})
-
-
-def _session_id() -> str:
-    """Return CLAUDE_SESSION_ID env var or 'default' if unset."""
-    return os.environ.get("CLAUDE_SESSION_ID", "default")
 
 
 def _get_ring_buffer():
