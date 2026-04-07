@@ -306,6 +306,8 @@ token-smithers stats
   smart_truncation                    12      42000      28700
 ```
 
+`stats` reads from `~/.token-smithers/metrics.json`, a JSON snapshot the proxy writes on the first compression event of a session and refreshes on shutdown. (The `status-line` command below reads from a different source — the SQLite learning store.)
+
 ### Status line
 
 See live token savings in your terminal status bar:
@@ -343,7 +345,7 @@ export PS1='$(token-smithers status-line) \$ '
 set -g status-right '#(token-smithers status-line)'
 ```
 
-The status line updates automatically as the metrics file is written during your session.
+The status line refreshes each time you run it, reading directly from the SQLite learning store (`~/.token-smithers/learning.db`) which the proxy updates as it logs compression events. Note: this is a different data source from `token-smithers stats`, which reads the JSON snapshot at `~/.token-smithers/metrics.json` (written on the first compression event of a session and again on shutdown).
 
 ## Manual Setup
 
