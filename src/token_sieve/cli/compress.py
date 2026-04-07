@@ -35,6 +35,16 @@ def _session_id() -> str:
     return os.environ.get("CLAUDE_SESSION_ID", "default")
 
 
+def _get_ring_buffer():
+    """Return a RingBuffer instance keyed to the current session.
+
+    Extracted as a module-level factory so tests can monkeypatch it.
+    """
+    from token_sieve.adapters.learning.ring_buffer import RingBuffer
+
+    return RingBuffer(session_id=_session_id())
+
+
 def run(argv: list[str]) -> int:
     """Run the compress subcommand.
 
@@ -77,9 +87,7 @@ def run(argv: list[str]) -> int:
     # Record raw output to ring buffer before compression (D5b).
     # Ring buffer failure must never break compression (isolated try/except).
     try:
-        from token_sieve.adapters.learning.ring_buffer import RingBuffer
-
-        buf = RingBuffer(session_id=_session_id())
+        buf = _get_ring_buffer()
         buf.append(raw_stdout)
     except OSError as exc:
         logger.warning("token_sieve ring buffer append failed: %s", exc)
