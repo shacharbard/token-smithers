@@ -19,6 +19,36 @@ from token_sieve.domain.learning_types import (
 )
 from token_sieve.domain.model import CompressionEvent
 
+# --- Schema v6 DDL (shadow_pattern_stats + retry_events) ---
+# Extracted as a module-level constant so the v6 migration block and fresh-DB
+# initialization share the same SQL without duplication.
+_V6_SCHEMA_SQL = """\
+CREATE TABLE IF NOT EXISTS shadow_pattern_stats (
+    pattern_hash TEXT NOT NULL,
+    adapter_name TEXT NOT NULL,
+    sample_count INTEGER NOT NULL DEFAULT 0,
+    raw_bytes_sum INTEGER NOT NULL DEFAULT 0,
+    raw_bytes_max INTEGER NOT NULL DEFAULT 0,
+    compressed_bytes_sum INTEGER NOT NULL DEFAULT 0,
+    compressed_bytes_max INTEGER NOT NULL DEFAULT 0,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    representative_blob BLOB,
+    PRIMARY KEY (pattern_hash, adapter_name)
+);
+
+CREATE TABLE IF NOT EXISTS retry_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pattern_hash TEXT NOT NULL,
+    occurred_at TEXT NOT NULL,
+    threshold_at_event INTEGER NOT NULL DEFAULT 5,
+    session_id TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_retry_events_pattern
+    ON retry_events(pattern_hash, occurred_at);
+"""
+
 _SCHEMA_SQL = """\
 CREATE TABLE IF NOT EXISTS tool_usage (
     tool_name TEXT NOT NULL,
@@ -124,8 +154,8 @@ class SQLiteLearningStore:
         await db.execute("PRAGMA cache_size=64000")
         await db.execute("PRAGMA foreign_keys=ON")
 
-        # Run schema migration
-        await db.executescript(_SCHEMA_SQL)
+        # Run schema migration (base + v6 tables for fresh DBs)
+        await db.executescript(_SCHEMA_SQL + _V6_SCHEMA_SQL)
 
         # Record schema version if not already present
         async with db.execute(
@@ -221,6 +251,20 @@ class SQLiteLearningStore:
             await db.execute(
                 "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
                 (5, now),
+            )
+            await db.commit()
+            current_version = 5
+
+        # --- Migration v6: shadow_pattern_stats + retry_events tables ---
+        # NOTE: The plan (09-03) called these "v5 tables" but wave-2 already
+        # consumed schema version 5 for sessions.ended_at. Using v6 here is the
+        # correct sequential number; the test file is named _v5 for plan traceability.
+        if current_version < 6:
+            await db.executescript(_V6_SCHEMA_SQL)
+            now = datetime.now(timezone.utc).isoformat()
+            await db.execute(
+                "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
+                (6, now),
             )
             await db.commit()
 

@@ -124,12 +124,17 @@ class TestV5Migration:
                     pass
 
     async def test_v5_schema_version_recorded(self, store) -> None:
-        """schema_version table must contain a row with version=5."""
+        """schema_version table must contain a row with version=6 (shadow tables).
+
+        NOTE: The plan called this 'v5' but wave-2 already used v5 for
+        sessions.ended_at. Shadow tables land in migration v6 as a DEVN-01
+        deviation from the plan's numbering.
+        """
         async with store._db.execute(
-            "SELECT version FROM schema_version WHERE version = 5"
+            "SELECT version FROM schema_version WHERE version = 6"
         ) as cursor:
             row = await cursor.fetchone()
-        assert row is not None, "schema_version missing version=5 row"
+        assert row is not None, "schema_version missing version=6 row (shadow+retry tables)"
 
     async def test_existing_tables_unchanged(self, store) -> None:
         """All v1-v4 tables must still exist after v5 migration."""
