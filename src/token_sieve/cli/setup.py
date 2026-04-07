@@ -362,6 +362,7 @@ def write_config(config_file: McpConfigFile) -> None:
 # Token-sieve PreToolUse hook entries to install in settings.json.
 _HOOK_MARKER = "token-sieve"
 
+# Advisory echo entries (matcher-level dedup: one per matcher type).
 _HOOK_ENTRIES: list[dict] = [
     {
         "matcher": "Grep",
@@ -396,6 +397,41 @@ _HOOK_ENTRIES: list[dict] = [
             {
                 "type": "command",
                 "command": f"echo 'token-sieve: consider ctx_execute for large output commands'",
+            }
+        ],
+    },
+]
+
+# Script-based hook entries (script-level dedup: keyed by script filename).
+# D11: bash-compress-rewrite runs AFTER bash-edge-redirect in the PreToolUse
+# list. If bash-edge-redirect is already registered (installed externally or
+# earlier), this entry is appended AFTER it. Otherwise it appends at the end.
+# The WebFetch entry blocks WebFetch and redirects to ctx_fetch_and_index (D20).
+_HOOKS_DIR = Path(__file__).parent.parent / "hooks"
+
+_SCRIPT_HOOK_ENTRIES: list[dict] = [
+    {
+        "matcher": "Bash",
+        # D11: must appear after bash-edge-redirect in PreToolUse list.
+        # _after_script controls install ordering (see install_hooks logic).
+        "_after_script": "bash-edge-redirect.sh",
+        "_script": "bash-compress-rewrite.sh",
+        "hooks": [
+            {
+                "type": "command",
+                # token-sieve marker ensures undo detection works.
+                # The comment is stripped by shell; only the script runs.
+                "command": f"bash {_HOOKS_DIR}/bash-compress-rewrite.sh  # token-sieve",
+            }
+        ],
+    },
+    {
+        "matcher": "WebFetch",
+        "_script": "webfetch-redirect.sh",
+        "hooks": [
+            {
+                "type": "command",
+                "command": f"bash {_HOOKS_DIR}/webfetch-redirect.sh  # token-sieve",
             }
         ],
     },
@@ -458,10 +494,11 @@ def install_hooks(
         _atomic_write(settings_path, data)
         return removed
 
-    # Install: add entries that don't already exist
+    # Install: add entries that don't already exist.
     installed = []
+
+    # Advisory echo entries: dedup by matcher + token-sieve marker.
     for hook_entry in _HOOK_ENTRIES:
-        # Check if already present (by matcher + token-sieve marker)
         already = any(
             e.get("matcher") == hook_entry["matcher"]
             and any(
@@ -474,8 +511,56 @@ def install_hooks(
             existing.append(hook_entry)
             installed.append(hook_entry["matcher"])
 
+    # Script-based entries: dedup by script filename in command string.
+    for script_entry in _SCRIPT_HOOK_ENTRIES:
+        script_name = script_entry["_script"]
+        # Check if already present by script filename
+        already = any(
+            any(script_name in str(h.get("command", ""))
+                for h in e.get("hooks", []))
+            for e in existing
+        )
+        if already:
+            continue
+
+        # Build a clean entry without internal metadata keys.
+        clean_entry = {
+            k: v for k, v in script_entry.items()
+            if not k.startswith("_")
+        }
+
+        # D11 ordering: if _after_script specified, insert after that entry.
+        after_script = script_entry.get("_after_script")
+        if after_script:
+            _insert_after_marker(existing, clean_entry, after_script)
+        else:
+            existing.append(clean_entry)
+
+        installed.append(clean_entry["matcher"])
+
     _atomic_write(settings_path, data)
     return installed
+
+
+def _insert_after_marker(
+    entries: list[dict], new_entry: dict, after_marker_substring: str
+) -> None:
+    """Insert new_entry into entries immediately after the first entry whose
+    hook command contains after_marker_substring.  If no such entry exists,
+    append at the end.
+
+    Mutates entries in-place.
+    """
+    after_idx = next(
+        (i for i, e in enumerate(entries)
+         if any(after_marker_substring in str(h.get("command", ""))
+                for h in e.get("hooks", []))),
+        None,
+    )
+    if after_idx is not None:
+        entries.insert(after_idx + 1, new_entry)
+    else:
+        entries.append(new_entry)
 
 
 def _atomic_write(path: Path, data: dict) -> None:
