@@ -199,6 +199,29 @@ def _get_bypass_store():
     return BypassStore(store=store)
 
 
+def _apply_internal_locale() -> str | None:
+    """Switch the process locale to C for CLI-internal formatting (D4d).
+
+    Returns the prior locale string so the caller can restore it via
+    ``locale.setlocale(LC_ALL, prior)``. Restoration matters for in-process
+    callers (e.g., test runners) so subsequent file I/O is not forced to
+    ASCII via ``locale.getpreferredencoding()``.
+
+    Note: this only mutates the C-library locale, not ``os.environ``. The
+    wrapped user subprocess builds its env from an ``os.environ`` snapshot
+    and therefore keeps the user's original LANG/LC_ALL.
+    """
+    try:
+        prior = locale.setlocale(locale.LC_ALL)
+    except locale.Error:  # pragma: no cover
+        prior = None
+    try:
+        locale.setlocale(locale.LC_ALL, "C")
+    except locale.Error:  # pragma: no cover — C locale should always be available
+        logger.debug("token_sieve: could not switch internal locale to C")
+    return prior
+
+
 def run(argv: list[str]) -> int:
     """Run the compress subcommand.
 
@@ -215,14 +238,21 @@ def run(argv: list[str]) -> int:
     """
     # D4d: force the C locale for the CLI's OWN Python formatting so that any
     # number/date conversion that ends up in compressed output is locale-stable.
-    # This intentionally does NOT mutate os.environ — the wrapped user
-    # subprocess (built from a snapshot of os.environ further below) keeps the
-    # user's original LANG/LC_ALL.
+    prior_locale = _apply_internal_locale()
     try:
-        locale.setlocale(locale.LC_ALL, "C")
-    except locale.Error:  # pragma: no cover — C locale should always be available
-        logger.debug("token_sieve: could not switch internal locale to C")
+        return _run_impl(argv)
+    finally:
+        # Restore prior locale so in-process callers (tests) are not stuck
+        # with C and degraded file-encoding defaults.
+        if prior_locale is not None:
+            try:
+                locale.setlocale(locale.LC_ALL, prior_locale)
+            except locale.Error:  # pragma: no cover
+                pass
 
+
+def _run_impl(argv: list[str]) -> int:
+    """Body of compress.run() — assumes locale is already set to C."""
     cmd = os.environ.pop("TSIEV_WRAP_CMD", None)
     if not cmd:
         print("Error: TSIEV_WRAP_CMD is not set", file=sys.stderr)
