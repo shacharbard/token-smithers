@@ -413,6 +413,10 @@ def main(argv: list[str] | None = None) -> int:
         return _run_recall(effective_argv[1:])
 
     if effective_argv and effective_argv[0] == "stats":
+        if "--shadow" in effective_argv:
+            from token_sieve.cli.stats_shadow import run_stats_shadow
+
+            return run_stats_shadow()
         full = "--full" in effective_argv
         return _run_stats(full=full)
 
