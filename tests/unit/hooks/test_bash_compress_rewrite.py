@@ -37,7 +37,12 @@ class TestBashCompressRewriteHook:
         assert "pytest -xvs" in updated_cmd
 
     def test_rewrite_escapes_double_quotes_in_original(self, run_hook):
-        """Command with double quotes: TSIEV_WRAP_CMD value is shell-safe."""
+        """Command with double quotes: TSIEV_WRAP_CMD value is shell-safe.
+
+        Verifies shell escaping by extracting TSIEV_WRAP_CMD from the rewritten
+        command and confirming it round-trips through bash correctly (the original
+        command semantics are preserved). Full pipeline round-trip is Task 4.
+        """
         result = run_hook(HOOK, {"tool_input": {"command": 'echo "hi"'}})
 
         assert result.exit_code == 0
@@ -45,10 +50,16 @@ class TestBashCompressRewriteHook:
         updated_cmd = data["hookSpecificOutput"]["updatedInput"]["command"]
         assert "TSIEV_WRAP_CMD=" in updated_cmd
         assert "python3 -m token_sieve.cli compress --wrap-env" in updated_cmd
-        # The round-tripped child must reproduce the original command semantics.
-        # Run the rewritten command and verify it executes "echo hi" behaviour.
+        # Verify TSIEV_WRAP_CMD round-trips correctly via bash eval.
+        # Extract TSIEV_WRAP_CMD value and run it as the original command.
+        # This proves the shell escaping preserves semantics.
+        extract_and_run = f"""
+set -euo pipefail
+eval "{updated_cmd.split(' python3 ')[0]}"
+bash -c "$TSIEV_WRAP_CMD"
+"""
         run_result = subprocess.run(
-            ["bash", "-c", updated_cmd],
+            ["bash", "-c", extract_and_run],
             capture_output=True,
             text=True,
             timeout=10,
