@@ -19,6 +19,31 @@ from token_sieve.domain.learning_types import (
 )
 from token_sieve.domain.model import CompressionEvent
 
+# --- Schema v7 DDL (bypass_rules + bypass_events) ---
+# Extracted as a module-level constant so the v7 migration block and fresh-DB
+# initialization share the same SQL without duplication.
+_V7_SCHEMA_SQL = """\
+CREATE TABLE IF NOT EXISTS bypass_rules (
+    pattern TEXT PRIMARY KEY,
+    source TEXT NOT NULL DEFAULT 'learned',
+    created_at TEXT NOT NULL,
+    last_reinforced_at TEXT NOT NULL,
+    session_count INTEGER NOT NULL DEFAULT 0,
+    is_active INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS bypass_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pattern TEXT NOT NULL,
+    occurred_at TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'inline',
+    session_id TEXT NOT NULL,
+    ci_detected INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_bypass_events_pattern
+    ON bypass_events(pattern, occurred_at);
+"""
+
 # --- Schema v6 DDL (shadow_pattern_stats + retry_events) ---
 # Extracted as a module-level constant so the v6 migration block and fresh-DB
 # initialization share the same SQL without duplication.
@@ -154,8 +179,8 @@ class SQLiteLearningStore:
         await db.execute("PRAGMA cache_size=64000")
         await db.execute("PRAGMA foreign_keys=ON")
 
-        # Run schema migration (base + v6 tables for fresh DBs)
-        await db.executescript(_SCHEMA_SQL + _V6_SCHEMA_SQL)
+        # Run schema migration (base + v6 + v7 tables for fresh DBs)
+        await db.executescript(_SCHEMA_SQL + _V6_SCHEMA_SQL + _V7_SCHEMA_SQL)
 
         # Record schema version if not already present
         async with db.execute(
@@ -265,6 +290,21 @@ class SQLiteLearningStore:
             await db.execute(
                 "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
                 (6, now),
+            )
+            await db.commit()
+            current_version = 6
+
+        # --- Migration v7: bypass_rules + bypass_events tables ---
+        # NOTE: The plan (09-04) called these "v6 tables" but wave-3 already
+        # consumed schema version 6 for shadow_pattern_stats + retry_events.
+        # Using v7 here is the correct sequential number; the test file is named
+        # _v6 for plan traceability (DEVN-01 deviation).
+        if current_version < 7:
+            await db.executescript(_V7_SCHEMA_SQL)
+            now = datetime.now(timezone.utc).isoformat()
+            await db.execute(
+                "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
+                (7, now),
             )
             await db.commit()
 

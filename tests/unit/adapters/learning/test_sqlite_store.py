@@ -94,7 +94,7 @@ class TestSQLiteSpecificBehavior:
         ) as cursor:
             row = await cursor.fetchone()
             assert row is not None
-            assert row[0] == 6  # 09-03: migration v6 adds shadow_pattern_stats + retry_events
+            assert row[0] == 7  # 09-04: migration v7 adds bypass_rules + bypass_events
         await store2.close()
 
     async def test_migration_preserves_existing_data(self, tmp_path) -> None:

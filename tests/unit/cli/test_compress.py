@@ -17,6 +17,18 @@ from token_sieve.cli.compress import run as run_compress
 from token_sieve.cli.main import main
 
 
+@pytest.fixture(autouse=True)
+def _no_bypass_store(monkeypatch):
+    """Prevent bypass store DB open in pre-bypass-feature tests.
+
+    All tests in this file pre-date the D5c bypass feature. They should not
+    incur SQLite I/O or asyncio threading from _get_bypass_store(). Patching
+    it to return None causes all bypass layers to be skipped silently (the
+    same fail-safe path as when the DB is unavailable).
+    """
+    monkeypatch.setattr(compress_mod, "_get_bypass_store", lambda: None)
+
+
 class TestCompressExitCode:
     """Exit code is byte-equal to upstream subprocess returncode (D1b)."""
 

@@ -306,7 +306,99 @@ def _run_stats(full: bool = False) -> int:
         if report.strip():
             print(report)
 
+        # D5c bypass auto-learn stats
+        _print_bypass_stats()
+
+        # D5d compression error telemetry
+        _print_compression_error_stats()
+
     return 0
+
+
+def _print_bypass_stats() -> None:
+    """Print bypass auto-learn + manual rule counts from the learning DB."""
+    import os
+    import sqlite3
+
+    db_path = os.environ.get(
+        "TOKEN_SIEVE_LEARNING_DB",
+        os.path.expanduser("~/.token-sieve/learning.db"),
+    )
+    if not Path(db_path).exists():
+        return
+
+    try:
+        conn = sqlite3.connect(db_path, timeout=1)
+
+        # Count auto-learned rules
+        auto_learned = conn.execute(
+            "SELECT COUNT(*) FROM bypass_rules WHERE source='learned' AND is_active=1"
+        ).fetchone()[0]
+
+        # Count total auto_learned events in bypass_events
+        auto_learned_events = conn.execute(
+            "SELECT COUNT(*) FROM bypass_events WHERE kind='auto_learned'"
+        ).fetchone()[0]
+
+        manual_count = conn.execute(
+            "SELECT COUNT(*) FROM bypass_rules WHERE source='manual' AND is_active=1"
+        ).fetchone()[0]
+
+        conn.close()
+
+        if auto_learned > 0 or manual_count > 0 or auto_learned_events > 0:
+            print()
+            print("  === Bypass Rules ===")
+            print(f"  Bypass auto-learned: {auto_learned} rules ({auto_learned_events} events)")
+            print(f"  Bypass manual:       {manual_count} rules")
+    except Exception:
+        pass
+
+
+def _print_compression_error_stats() -> None:
+    """Print compression error telemetry (D5d) from the last 7 days."""
+    import os
+    import sqlite3
+    from datetime import date, timedelta
+
+    db_path = os.environ.get(
+        "TOKEN_SIEVE_LEARNING_DB",
+        os.path.expanduser("~/.token-sieve/learning.db"),
+    )
+    if not Path(db_path).exists():
+        return
+
+    try:
+        conn = sqlite3.connect(db_path, timeout=1)
+
+        # Check if compression_errors table exists
+        tables = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='compression_errors'"
+        ).fetchone()
+        if tables is None:
+            conn.close()
+            return
+
+        seven_days_ago = (date.today() - timedelta(days=7)).isoformat()
+        rows = conn.execute(
+            "SELECT COUNT(*) as cnt, adapter_name, exc_type "
+            "FROM compression_errors "
+            "WHERE occurred_at >= ? "
+            "GROUP BY adapter_name, exc_type ORDER BY cnt DESC",
+            (seven_days_ago,),
+        ).fetchall()
+        conn.close()
+
+        if not rows:
+            return
+
+        total = sum(r[0] for r in rows)
+        print()
+        print(f"  === Compression Errors (last 7 days): {total} ===")
+        for cnt, adapter, exc_type in rows:
+            print(f"    {adapter} / {exc_type}: {cnt}")
+    except Exception:
+        pass
 
 
 def _format_tokens(n: int) -> str:
@@ -402,6 +494,11 @@ def main(argv: list[str] | None = None) -> int:
     """
     # Check for stats subcommand before argparse (avoids positional conflict)
     effective_argv = argv if argv is not None else sys.argv[1:]
+    if effective_argv and effective_argv[0] == "bypass":
+        from token_sieve.cli.bypass import run_bypass
+
+        return run_bypass(effective_argv[1:])
+
     if effective_argv and effective_argv[0] == "compress":
         from token_sieve.cli.compress import run as _run_compress
 

@@ -53,9 +53,37 @@ FLAG=$(echo "$RESULT" | tail -1)
 [ "$FLAG" = "empty" ] && exit 0
 [ -z "$QUOTED_CMD" ] && exit 0
 
+# D5c: Detect inline NO_COMPRESS=1 in the command string.
+# If present, the rewrite includes TSIEV_INLINE_NO_COMPRESS=1 so the CLI
+# knows the bypass was intentional (counts toward auto-learn).
+# The raw command (with NO_COMPRESS=1 prefix intact) is still passed via
+# TSIEV_WRAP_CMD so the CLI can extract the real command and record it.
+INLINE_MARKER=""
+RESULT2=$(echo "$RESULT" | python3 -c "
+import sys
+lines = sys.stdin.read().splitlines()
+# Reconstruct the raw (unquoted) command by checking if the quoted form starts with NO_COMPRESS
+# We can detect by checking the first line (quoted) for NO_COMPRESS prefix indicator.
+# Actually, detect from the raw command within the quoted string: look for NO_COMPRESS=1 in quoted cmd
+quoted = lines[0] if lines else ''
+# shlex.quote wraps in single quotes, so literal prefix is: 'NO_COMPRESS=1  (or just starts with NO_COMPRESS)
+# Simpler: detect if quoted_cmd contains NO_COMPRESS=1
+import re
+# Match 'NO_COMPRESS=1 as prefix inside the single-quoted string (or unquoted)
+if re.search(r\"NO_COMPRESS=1\s\", quoted):
+    print('inline')
+else:
+    print('no')
+" 2>/dev/null) || RESULT2="no"
+
+if [ "$RESULT2" = "inline" ]; then
+    INLINE_MARKER=" TSIEV_INLINE_NO_COMPRESS=1"
+fi
+
 # Build rewrite template (D1):
 #   TSIEV_WRAP_CMD=<shell-quoted-original> python3 -m token_sieve compress --wrap-env
-REWRITTEN="TSIEV_WRAP_CMD=${QUOTED_CMD} python3 -m token_sieve compress --wrap-env"
+# When inline NO_COMPRESS=1 is detected, also export TSIEV_INLINE_NO_COMPRESS=1
+REWRITTEN="TSIEV_WRAP_CMD=${QUOTED_CMD}${INLINE_MARKER} python3 -m token_sieve compress --wrap-env"
 
 # Emit hook protocol JSON to stdout (rewrite mode).
 # python3 used for reliable JSON serialization of the rewritten command string.

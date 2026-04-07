@@ -52,6 +52,67 @@ def _run_async(coro) -> None:
         asyncio.run(coro)
 
 
+def _run_async_bool(coro_or_val) -> bool:
+    """Run an async coroutine that returns bool, defaulting to False on error.
+
+    Also handles synchronous values (non-coroutines) for test compatibility.
+    """
+    import inspect
+
+    if not inspect.isawaitable(coro_or_val):
+        # Already a plain value (e.g., synchronous mock in tests)
+        return bool(coro_or_val)
+
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # Running in async context (e.g., pytest-asyncio).
+            # Spin a new event loop in a daemon thread to avoid deadlock.
+            import threading
+
+            result_holder: list = []
+
+            def run_in_thread():
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                try:
+                    result_holder.append(new_loop.run_until_complete(coro_or_val))
+                except Exception:  # noqa: BLE001
+                    result_holder.append(False)
+                finally:
+                    new_loop.close()
+
+            t = threading.Thread(target=run_in_thread, daemon=True)
+            t.start()
+            t.join(timeout=5)
+            return bool(result_holder[0]) if result_holder else False
+        else:
+            return bool(asyncio.run(coro_or_val))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _bypass_and_run_raw(cmd: str) -> int:
+    """Run cmd via bash and write raw stdout without compression.
+
+    Used by all D5c bypass layers (denylist, env var, learned rules).
+    """
+    clean_env = dict(os.environ)
+    result = subprocess.run(
+        ["bash", "-c", cmd],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=clean_env,
+    )
+    sys.stdout.write(result.stdout)
+    sys.stdout.flush()
+    if result.stderr:
+        sys.stderr.write(result.stderr)
+        sys.stderr.flush()
+    return result.returncode
+
+
 # Annotation emitted to stderr when compression fails (D5a).
 # Format preserved exactly so 09-04 telemetry can grep for this marker.
 _FAIL_OPEN_TEMPLATE = (
@@ -123,6 +184,20 @@ def _get_shadow_logger():
     return ShadowLogger(store=store)
 
 
+def _get_bypass_store():
+    """Return a BypassStore bound to the default learning store.
+
+    Returns None if the store is unavailable (fail-safe).
+    Extracted as a factory so tests can monkeypatch it.
+    """
+    from token_sieve.adapters.learning.bypass_store import BypassStore
+
+    store = _get_learning_store()
+    if store is None:
+        return None
+    return BypassStore(store=store)
+
+
 def run(argv: list[str]) -> int:
     """Run the compress subcommand.
 
@@ -141,6 +216,51 @@ def run(argv: list[str]) -> int:
     if not cmd:
         print("Error: TSIEV_WRAP_CMD is not set", file=sys.stderr)
         return 1
+
+    # --- D5c Layer 1: built-in sensitive denylist (checked BEFORE everything) ---
+    try:
+        from token_sieve.adapters.learning import sensitive_denylist
+
+        if sensitive_denylist.matches(cmd):
+            return _bypass_and_run_raw(cmd)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("token_sieve: denylist check failed: %s", exc)
+
+    # --- D5c Layers 2+3: env var bypass + auto-learn recording ---
+    inline_bypass = os.environ.get("TSIEV_INLINE_NO_COMPRESS") == "1"
+    inherited_bypass = (
+        os.environ.get("NO_COMPRESS") == "1" and not inline_bypass
+    )
+
+    # CI detection — skip auto-learn recording in CI environments (D5c)
+    _ci_env_vars = ("CI", "GITHUB_ACTIONS", "CI_PIPELINE_ID")
+    is_ci = any(os.environ.get(v, "") for v in _ci_env_vars)
+
+    if inline_bypass or inherited_bypass:
+        # Record inline event for auto-learn (CI detection: skip if in CI)
+        if inline_bypass and not is_ci:
+            try:
+                bypass_store = _get_bypass_store()
+                if bypass_store is not None:
+                    _run_async(
+                        bypass_store.record_inline_bypass(cmd, session_id=_session_id())
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("token_sieve: bypass store record failed: %s", exc)
+        return _bypass_and_run_raw(cmd)
+
+    # --- D5c Layer 3: learned rules check ---
+    try:
+        bypass_store = _get_bypass_store()
+        if bypass_store is not None:
+            is_rule_bypass = _run_async_bool(bypass_store.is_bypassed(cmd))
+            if is_rule_bypass:
+                _run_async(
+                    bypass_store.record_passive_reinforcement(cmd, session_id=_session_id())
+                )
+                return _bypass_and_run_raw(cmd)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("token_sieve: bypass store lookup failed: %s", exc)
 
     # Read escape hatches (D2f)
     retry_rule_off = os.environ.get("TOKEN_SIEVE_RETRY_DISABLE_RULE", "").lower() == "off"
@@ -234,6 +354,22 @@ def run(argv: list[str]) -> int:
             sys.stdout.write(compression_input)
             sys.stdout.flush()
             print(annotation, file=sys.stderr)
+            # D5d: record fail-open telemetry to learning DB
+            try:
+                from token_sieve.adapters.learning.retry_detector import normalize_pattern_hash
+
+                fail_store = _get_learning_store()
+                if fail_store is not None:
+                    _run_async(
+                        _write_compression_error(
+                            fail_store,
+                            adapter_name="compress_cli",
+                            exc_type=type(exc).__name__,
+                            pattern_hash=normalize_pattern_hash(cmd),
+                        )
+                    )
+            except Exception as inner_exc:  # noqa: BLE001
+                logger.debug("token_sieve: fail-open telemetry write failed: %s", inner_exc)
 
     # --- Shadow logging (D3) — fire-and-forget, MUST NOT alter Claude's bytes ---
     try:
@@ -270,5 +406,42 @@ async def _write_retry_event(store, pattern_hash: str, occurred_at: str) -> None
         VALUES (?, ?, ?, ?)
         """,
         (pattern_hash, occurred_at, 5, _session_id()),
+    )
+    await store._db.commit()
+
+
+async def _write_compression_error(
+    store,
+    adapter_name: str,
+    exc_type: str,
+    pattern_hash: str,
+) -> None:
+    """Write a fail-open telemetry row to compression_errors table (D5d).
+
+    The table is created on first use (CREATE TABLE IF NOT EXISTS) so that
+    existing databases don't require a schema migration just for this.
+    """
+    from datetime import datetime, timezone
+
+    # Ensure table exists (idempotent)
+    await store._db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS compression_errors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            adapter_name TEXT NOT NULL,
+            exc_type TEXT NOT NULL,
+            pattern_hash TEXT NOT NULL,
+            occurred_at TEXT NOT NULL,
+            session_id TEXT NOT NULL
+        )
+        """
+    )
+    now = datetime.now(timezone.utc).isoformat()
+    await store._db.execute(
+        """
+        INSERT INTO compression_errors (adapter_name, exc_type, pattern_hash, occurred_at, session_id)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (adapter_name, exc_type, pattern_hash, now, _session_id()),
     )
     await store._db.commit()
