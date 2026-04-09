@@ -212,6 +212,25 @@ def _discover_adapter_classes() -> list[type]:
 _DISCOVERED = _discover_adapter_classes()
 
 
+def test_all_adapters_explicitly_declare_deterministic() -> None:
+    """Every discovered adapter MUST declare ``deterministic`` on its own class.
+
+    C5 fix: the Protocol default of ``True`` silently audited any forgetful
+    adapter as deterministic. This test asserts the attribute is present in
+    ``cls.__dict__`` (i.e., declared on the class itself, not inherited from
+    a Protocol default or a base class).
+    """
+    missing = [
+        cls.__name__
+        for cls in _DISCOVERED
+        if "deterministic" not in cls.__dict__
+    ]
+    assert not missing, (
+        f"The following adapters must explicitly declare `deterministic = True|False` "
+        f"at class level: {missing}"
+    )
+
+
 @pytest.mark.parametrize(
     "adapter_cls", _DISCOVERED, ids=lambda c: c.__name__
 )
