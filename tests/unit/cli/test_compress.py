@@ -220,8 +220,11 @@ class TestFailOpen:
 
         assert rc == 0  # subprocess exit code preserved
         assert "RAWOUT" in captured.out
-        assert "[token-sieve: compression failed (RuntimeError: boom)" in captured.err
+        # M6: annotation includes only the exception TYPE (not the message).
+        assert "[token-sieve: compression failed (RuntimeError)" in captured.err
         assert "please report" in captured.err
+        # M6: str(exc) must NOT leak onto stderr.
+        assert "boom" not in captured.err
 
     def test_fail_open_preserves_subprocess_returncode(self, monkeypatch, capsys):
         """When pipeline raises, the subprocess exit code is still propagated."""

@@ -147,7 +147,7 @@ def _bypass_and_run_raw(cmd: str) -> int:
 # Annotation emitted to stderr when compression fails (D5a).
 # Format preserved exactly so 09-04 telemetry can grep for this marker.
 _FAIL_OPEN_TEMPLATE = (
-    "[token-sieve: compression failed ({type}: {msg}), raw output below — please report]"
+    "[token-sieve: compression failed ({type}), raw output below — please report]"
 )
 
 
@@ -566,12 +566,14 @@ def _run_impl(argv: list[str]) -> int:
             sys.stdout.write(compressed_envelope.content)
             sys.stdout.flush()
         except Exception as exc:  # noqa: BLE001  — fail-open (D5a)
-            annotation = _FAIL_OPEN_TEMPLATE.format(
-                type=type(exc).__name__, msg=str(exc)
-            )
+            # M6: only the exception TYPE goes on stderr. The full str(exc)
+            # may contain file paths, secrets, or cached content snippets,
+            # so we log it on a separate channel for operators.
+            annotation = _FAIL_OPEN_TEMPLATE.format(type=type(exc).__name__)
             sys.stdout.write(compression_input)
             sys.stdout.flush()
             print(annotation, file=sys.stderr)
+            logger.warning("token_sieve: compression failed: %s", exc)
             # D5d: record fail-open telemetry to learning DB
             try:
                 from token_sieve.adapters.learning.retry_detector import normalize_pattern_hash
