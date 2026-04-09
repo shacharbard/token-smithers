@@ -195,6 +195,51 @@ def _resolve_wrap_command() -> tuple[str, list[str] | None, str | None]:
 # Only the first shell word (literal match) triggers the merge.
 _STDERR_MERGE_ALLOWLIST: frozenset[str] = frozenset({"cargo", "docker", "webpack"})
 
+
+def _effective_first_word(tokens: list[str]) -> str:
+    """Resolve the effective binary name from a tokenised command (M2).
+
+    Strips leading ``KEY=val`` assignments, ``env`` and ``sudo`` wrappers
+    (and their own ``KEY=val`` args), then returns ``os.path.basename`` of
+    the first remaining token so absolute / relative paths also match the
+    allowlist. Returns empty string if nothing meaningful remains.
+
+    Handled evasions:
+      - ``FOO=bar cargo build`` → ``cargo``
+      - ``env RUST_LOG=debug cargo build`` → ``cargo``
+      - ``sudo docker ps`` → ``docker``
+      - ``sudo env X=1 cargo build`` → ``cargo``
+      - ``/usr/local/bin/cargo build`` → ``cargo``
+      - ``./node_modules/.bin/webpack build`` → ``webpack``
+    """
+    i = 0
+    n = len(tokens)
+    # Skip leading KEY=val assignments and env/sudo wrappers.
+    while i < n:
+        tok = tokens[i]
+        if not tok:
+            i += 1
+            continue
+        # KEY=VALUE: an identifier followed by '=' (no spaces). Accept as
+        # an assignment only if the part before '=' looks like a shell
+        # identifier (letters/digits/underscore, not starting with digit).
+        eq = tok.find("=")
+        if eq > 0:
+            name = tok[:eq]
+            if name and (name[0].isalpha() or name[0] == "_") and all(
+                c.isalnum() or c == "_" for c in name
+            ):
+                i += 1
+                continue
+        base = os.path.basename(tok)
+        if base in ("env", "sudo"):
+            i += 1
+            continue
+        break
+    if i >= n:
+        return ""
+    return os.path.basename(tokens[i])
+
 # Default learning DB path (same as main.py / stats uses)
 _DEFAULT_LEARNING_DB = os.path.expanduser("~/.token-sieve/learning.db")
 
@@ -369,11 +414,15 @@ def _run_impl(argv: list[str]) -> int:
     # Read escape hatches (D2f)
     retry_rule_off = os.environ.get("TOKEN_SIEVE_RETRY_DISABLE_RULE", "").lower() == "off"
 
-    # Determine whether stderr should be merged into compression input
+    # Determine whether stderr should be merged into compression input.
+    # M2: resolve the effective binary name through env/sudo prefixes,
+    # KEY=val assignments, and path basenames, not just the literal
+    # first shell word.
     try:
-        first_word = shlex.split(cmd)[0] if cmd.strip() else ""
+        tokens = shlex.split(cmd) if cmd.strip() else []
     except ValueError:
-        first_word = ""
+        tokens = []
+    first_word = _effective_first_word(tokens)
     merge_stderr = first_word in _STDERR_MERGE_ALLOWLIST
 
     # Build env without TSIEV_WRAP_CMD* (already popped above). H1: force
