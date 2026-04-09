@@ -19,16 +19,28 @@ INPUT=$(cat 2>/dev/null || echo "")
 [ -z "$INPUT" ] && exit 0
 
 # Extract tool_input.command from the Claude Code hook JSON.
-# Uses python3 for both JSON parsing and shell-safe quoting (shlex.quote).
-# Outputs two lines: <shell-quoted-command>\n<raw-command-flag>
-# raw-command-flag is "empty" when command was absent/empty, "present" otherwise.
+# Uses python3 for JSON parsing, shell-safe quoting (shlex.quote), and
+# anchored NO_COMPRESS=1 detection against the RAW command string.
+#
+# H5 fix: inline NO_COMPRESS detection must be computed from the raw cmd
+# (not re-derived from the shlex-quoted form) and must be anchored to the
+# start of the command. Unanchored detection allowed:
+#   - bypass-by-filename poisoning (`pytest tests/test_NO_COMPRESS=1_x.py`)
+#   - `: NO_COMPRESS=1 ; real_cmd` evasion (no-op prefix injects marker
+#     while the real command runs unwrapped)
+#
+# Outputs three lines:
+#   <shell-quoted-command>
+#   <flag>          — "empty" or "present"
+#   <inline-marker> — "1" if anchored NO_COMPRESS=1 at start of raw cmd, else "0"
 RESULT=$(echo "$INPUT" | python3 -c "
-import sys, json, shlex
+import sys, json, shlex, re
 try:
     d = json.load(sys.stdin)
 except (json.JSONDecodeError, ValueError):
     print('')
     print('empty')
+    print('0')
     sys.exit(0)
 
 ti = d.get('tool_input', {})
@@ -36,47 +48,37 @@ cmd = ti.get('command', '')
 if not cmd:
     print('')
     print('empty')
+    print('0')
 else:
     # shlex.quote produces a safely single-quoted string for shell use.
-    # We need the raw string to embed as the env var value; shlex.quote
-    # wraps it in single quotes which handles all special chars including
-    # double quotes, dollar signs, backticks, and pipes.
     print(shlex.quote(cmd))
     print('present')
+    # Anchored detection on the RAW cmd: optional leading whitespace, then
+    # literal 'NO_COMPRESS=1' followed by whitespace. Must be at the very
+    # start — anything before it (including ':' no-op, grep args, etc.)
+    # disqualifies it as a legitimate inline bypass.
+    if re.match(r'^\s*NO_COMPRESS=1\s', cmd):
+        print('1')
+    else:
+        print('0')
 " 2>/dev/null) || { exit 0; }
 
-# Parse the two-line result
-QUOTED_CMD=$(echo "$RESULT" | head -1)
-FLAG=$(echo "$RESULT" | tail -1)
+# Parse the three-line result using pure-bash parameter expansion
+# (avoids head/tail subprocesses that can trip pipefail with SIGPIPE).
+QUOTED_CMD=${RESULT%%$'\n'*}
+_REST=${RESULT#*$'\n'}
+FLAG=${_REST%%$'\n'*}
+INLINE_FLAG=${_REST#*$'\n'}
 
 # Empty/missing command — allow passthrough
 [ "$FLAG" = "empty" ] && exit 0
 [ -z "$QUOTED_CMD" ] && exit 0
 
-# D5c: Detect inline NO_COMPRESS=1 in the command string.
+# D5c: inline NO_COMPRESS=1 marker (H5: anchored, computed from raw cmd).
 # If present, the rewrite includes TSIEV_INLINE_NO_COMPRESS=1 so the CLI
 # knows the bypass was intentional (counts toward auto-learn).
-# The raw command (with NO_COMPRESS=1 prefix intact) is still passed via
-# TSIEV_WRAP_CMD so the CLI can extract the real command and record it.
 INLINE_MARKER=""
-RESULT2=$(echo "$RESULT" | python3 -c "
-import sys
-lines = sys.stdin.read().splitlines()
-# Reconstruct the raw (unquoted) command by checking if the quoted form starts with NO_COMPRESS
-# We can detect by checking the first line (quoted) for NO_COMPRESS prefix indicator.
-# Actually, detect from the raw command within the quoted string: look for NO_COMPRESS=1 in quoted cmd
-quoted = lines[0] if lines else ''
-# shlex.quote wraps in single quotes, so literal prefix is: 'NO_COMPRESS=1  (or just starts with NO_COMPRESS)
-# Simpler: detect if quoted_cmd contains NO_COMPRESS=1
-import re
-# Match 'NO_COMPRESS=1 as prefix inside the single-quoted string (or unquoted)
-if re.search(r\"NO_COMPRESS=1\s\", quoted):
-    print('inline')
-else:
-    print('no')
-" 2>/dev/null) || RESULT2="no"
-
-if [ "$RESULT2" = "inline" ]; then
+if [ "$INLINE_FLAG" = "1" ]; then
     INLINE_MARKER=" TSIEV_INLINE_NO_COMPRESS=1"
 fi
 
