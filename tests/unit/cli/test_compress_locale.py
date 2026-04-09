@@ -1,39 +1,42 @@
-"""Tests for D4d: LC_ALL=C scope is surgical (CLI internals only).
+"""Tests for D4d + H1: locale handling is via subprocess env, never parent.
 
-The CLI's own Python formatting must use the C locale so that any number
-or date formatting that ends up in compressed output is locale-stable.
-But the **wrapped user subprocess** must still see the user's original
-LANG/LC_ALL — otherwise the user's command would behave differently when
-run under token-sieve vs natively.
+H1 supersedes the prior batch-4 D4d decision. The rationale is:
+  1. Mutating the process-global locale is not thread-safe and forces
+     getpreferredencoding() to ASCII, crashing subprocess.run(text=True)
+     on any non-ASCII child output.
+  2. The original goal of "deterministic child formatting" is still met by
+     passing LC_ALL=C / LANG=C via the subprocess env kwarg, which is
+     thread-safe and does not affect the parent.
+
+The previous test here asserted that the child saw the user's LANG intact.
+Under H1 that is inverted: the child MUST see LC_ALL=C / LANG=C so
+wrapped tools produce locale-stable output that compresses deterministically.
 """
 
 from __future__ import annotations
 
 import locale
-import os
+
+import pytest
 
 from token_sieve.cli import compress as compress_cli
 
 
-def test_lc_all_c_set_for_internal_formatting(monkeypatch) -> None:
-    """During compress.run(), the Python locale is C.
+@pytest.fixture(autouse=True)
+def _no_bypass_store(monkeypatch):
+    monkeypatch.setattr(compress_cli, "_get_bypass_store", lambda: None)
 
-    We monkeypatch the inner _run_impl so we can observe the active
-    locale at the moment the body would execute. After run() returns,
-    the prior locale must be restored to avoid polluting other tests.
+
+def test_parent_locale_is_not_mutated(monkeypatch) -> None:
+    """compress.run() must not mutate the parent process locale (H1).
+
+    The previous version of this test asserted the opposite (that the
+    parent got switched to C). Under H1 that behavior is a bug — locale
+    mutation is not thread-safe and breaks UTF-8 decoding of child output.
     """
     monkeypatch.setenv("LANG", "de_DE.UTF-8")
     monkeypatch.setenv("TSIEV_WRAP_CMD", "true")
 
-    captured: dict[str, str | None] = {}
-
-    def fake_impl(argv):
-        captured["during"] = locale.setlocale(locale.LC_ALL)
-        return 0
-
-    monkeypatch.setattr(compress_cli, "_run_impl", fake_impl)
-
-    # Try to set a non-C locale before invocation so we can detect the switch.
     try:
         locale.setlocale(locale.LC_ALL, "")
     except locale.Error:
@@ -42,39 +45,27 @@ def test_lc_all_c_set_for_internal_formatting(monkeypatch) -> None:
 
     compress_cli.run([])
 
-    assert captured["during"] in ("C", "POSIX"), (
-        f"Expected CLI internals to switch to C locale during run(); "
-        f"got {captured['during']!r}"
-    )
-
-    # And the prior locale must be restored after run() returns so other
-    # in-process callers (e.g., the rest of the pytest session) are not
-    # stuck with the C locale and its ASCII default file encoding.
     after = locale.setlocale(locale.LC_ALL)
     assert after == before, (
-        f"compress.run() must restore prior locale; before={before!r} after={after!r}"
+        f"compress.run() must not mutate parent locale; before={before!r} after={after!r}"
     )
 
 
-def test_user_command_locale_NOT_overridden(
-    monkeypatch, tmp_path, capsys
-) -> None:
-    """The wrapped subprocess must inherit the user's original LANG, not C.
+def test_wrapped_subprocess_sees_lc_all_c(monkeypatch, capsys) -> None:
+    """The wrapped subprocess MUST see LC_ALL=C / LANG=C (H1).
 
-    We invoke a sub-shell that prints its $LANG. The compressed stdout
-    should contain the user's original LANG value, not 'C'.
+    Previously, batch 4 asserted the wrapped subprocess should inherit the
+    user's LANG. H1 inverts this: deterministic child formatting is the
+    whole point of injecting LC_ALL=C, and it must be done via the env
+    kwarg (thread-safe) rather than via mutating the parent locale.
     """
     monkeypatch.setenv("LANG", "de_DE.UTF-8")
     monkeypatch.delenv("LC_ALL", raising=False)
-    monkeypatch.setenv("TSIEV_WRAP_CMD", 'printf "%s" "$LANG"')
+    monkeypatch.setenv("TSIEV_WRAP_CMD", 'printf "%s|%s" "$LC_ALL" "$LANG"')
 
     compress_cli.run([])
 
     captured = capsys.readouterr()
-    # Subprocess saw the user's original LANG, not C.
-    assert "de_DE.UTF-8" in captured.out, (
-        f"Wrapped subprocess should see user's LANG; got stdout={captured.out!r}"
-    )
-    assert captured.out.strip() != "C", (
-        "Wrapped subprocess must NOT see LANG=C — locale scope leaked"
+    assert "C|C" in captured.out, (
+        f"Wrapped subprocess must see LC_ALL=C and LANG=C; got stdout={captured.out!r}"
     )

@@ -100,13 +100,19 @@ def _bypass_and_run_raw(cmd: str) -> int:
     """Run cmd via bash and write raw stdout without compression.
 
     Used by all D5c bypass layers (denylist, env var, learned rules).
+
+    H1: passes LC_ALL=C / LANG=C via env and uses encoding="utf-8" with
+    errors="replace" so non-ASCII child output never crashes decode.
     """
     clean_env = dict(os.environ)
+    clean_env["LC_ALL"] = "C"
+    clean_env["LANG"] = "C"
     result = subprocess.run(
         ["bash", "-c", cmd],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         env=clean_env,
     )
     sys.stdout.write(result.stdout)
@@ -265,26 +271,19 @@ def _get_bypass_store():
 
 
 def _apply_internal_locale() -> str | None:
-    """Switch the process locale to C for CLI-internal formatting (D4d).
+    """Deprecated — retained for backward compat; returns None and no-ops.
 
-    Returns the prior locale string so the caller can restore it via
-    ``locale.setlocale(LC_ALL, prior)``. Restoration matters for in-process
-    callers (e.g., test runners) so subsequent file I/O is not forced to
-    ASCII via ``locale.getpreferredencoding()``.
+    H1 fix: mutating the process-global locale is not thread-safe and
+    forces getpreferredencoding() to ASCII, which crashes
+    subprocess.run(text=True) on any non-ASCII child output. Instead, the
+    CLI now passes ``LC_ALL=C`` to the wrapped subprocess via the ``env``
+    kwarg (see _run_impl) and uses ``encoding="utf-8", errors="replace"``
+    on the ``subprocess.run`` call so decoding never crashes.
 
-    Note: this only mutates the C-library locale, not ``os.environ``. The
-    wrapped user subprocess builds its env from an ``os.environ`` snapshot
-    and therefore keeps the user's original LANG/LC_ALL.
+    The function is kept so any external caller / test that still imports
+    it does not break.
     """
-    try:
-        prior = locale.setlocale(locale.LC_ALL)
-    except locale.Error:  # pragma: no cover
-        prior = None
-    try:
-        locale.setlocale(locale.LC_ALL, "C")
-    except locale.Error:  # pragma: no cover — C locale should always be available
-        logger.debug("token_sieve: could not switch internal locale to C")
-    return prior
+    return None
 
 
 def run(argv: list[str]) -> int:
@@ -301,19 +300,12 @@ def run(argv: list[str]) -> int:
     Returns:
         The wrapped subprocess returncode.
     """
-    # D4d: force the C locale for the CLI's OWN Python formatting so that any
-    # number/date conversion that ends up in compressed output is locale-stable.
-    prior_locale = _apply_internal_locale()
-    try:
-        return _run_impl(argv)
-    finally:
-        # Restore prior locale so in-process callers (tests) are not stuck
-        # with C and degraded file-encoding defaults.
-        if prior_locale is not None:
-            try:
-                locale.setlocale(locale.LC_ALL, prior_locale)
-            except locale.Error:  # pragma: no cover
-                pass
+    # H1 fix: never mutate the process-global locale. Deterministic
+    # number/date formatting for the CLI's own Python code path is
+    # achieved by keeping all format strings explicit (no locale-dependent
+    # conversions). The wrapped subprocess gets LC_ALL=C / LANG=C via the
+    # env kwarg in _run_impl.
+    return _run_impl(argv)
 
 
 def _run_impl(argv: list[str]) -> int:
@@ -384,9 +376,18 @@ def _run_impl(argv: list[str]) -> int:
         first_word = ""
     merge_stderr = first_word in _STDERR_MERGE_ALLOWLIST
 
-    # Build env without TSIEV_WRAP_CMD* (already popped above)
+    # Build env without TSIEV_WRAP_CMD* (already popped above). H1: force
+    # LC_ALL=C / LANG=C via the env kwarg — never via locale.setlocale on
+    # the parent process — so the child gets deterministic formatting and
+    # the parent's getpreferredencoding() is unaffected.
     clean_env = dict(os.environ)
+    clean_env["LC_ALL"] = "C"
+    clean_env["LANG"] = "C"
 
+    # H1: use encoding="utf-8", errors="replace" so non-ASCII child output
+    # (emoji, accented filenames, UTF-8 git log) never crashes decode. The
+    # C-locale env above only affects the child's internal formatting — it
+    # does NOT force the pipe encoding.
     if wrap_argv is not None:
         # C1: argv-array protocol. subprocess.run(argv, shell=False) — no
         # shell is ever invoked, so filenames with $(), backticks, ;, quotes
@@ -395,7 +396,8 @@ def _run_impl(argv: list[str]) -> int:
             wrap_argv,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             env=clean_env,
             shell=False,
         )
@@ -406,7 +408,8 @@ def _run_impl(argv: list[str]) -> int:
             ["bash", "-c", cmd],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             env=clean_env,
         )
 
