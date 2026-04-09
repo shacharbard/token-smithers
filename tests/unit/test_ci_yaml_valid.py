@@ -68,3 +68,44 @@ def test_ci_includes_python_3_11_and_3_12() -> None:
     versions = {str(e.get("python")) for e in include}
     assert "3.11" in versions, f"Missing python 3.11; saw {versions}"
     assert "3.12" in versions, f"Missing python 3.12; saw {versions}"
+
+
+def test_ci_matrix_pins_pythonhashseed() -> None:
+    """PYTHONHASHSEED must be set on every matrix lane.
+
+    C5 fix: at least 3 lanes must pin PYTHONHASHSEED="0" (deterministic
+    iteration order) and exactly 1 lane must set PYTHONHASHSEED="random"
+    (surfaces dict-ordering bugs masked by a pinned seed).
+    """
+    include = _load_matrix_include()
+    seeds = [str(e.get("PYTHONHASHSEED", "")) for e in include]
+    pinned_zero = [s for s in seeds if s == "0"]
+    randomized = [s for s in seeds if s == "random"]
+    unset = [s for s in seeds if s == ""]
+
+    assert not unset, (
+        f"Every matrix lane must declare PYTHONHASHSEED; unset: {unset!r}"
+    )
+    assert len(pinned_zero) >= 3, (
+        f"Expected at least 3 lanes with PYTHONHASHSEED='0'; got {pinned_zero!r}"
+    )
+    assert len(randomized) == 1, (
+        f"Expected exactly 1 lane with PYTHONHASHSEED='random'; got {randomized!r}"
+    )
+
+
+def test_ci_env_block_exports_pythonhashseed() -> None:
+    """The job env: block must export PYTHONHASHSEED from matrix."""
+    if not _CI_YML.is_file():
+        pytest.fail(f"CI workflow not found at {_CI_YML}")
+    data = yaml.safe_load(_CI_YML.read_text())
+    jobs = data.get("jobs", {})
+    for _name, job in jobs.items():
+        env = job.get("env", {}) or {}
+        if "PYTHONHASHSEED" in env:
+            assert "matrix.PYTHONHASHSEED" in str(env["PYTHONHASHSEED"]), (
+                f"Job env.PYTHONHASHSEED must reference matrix.PYTHONHASHSEED; "
+                f"got {env['PYTHONHASHSEED']!r}"
+            )
+            return
+    pytest.fail("No job exports PYTHONHASHSEED via its env: block")
