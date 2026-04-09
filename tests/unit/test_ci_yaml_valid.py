@@ -94,6 +94,44 @@ def test_ci_matrix_pins_pythonhashseed() -> None:
     )
 
 
+def test_ci_actions_pinned_to_sha() -> None:
+    """M12: every `uses:` line must pin an action to a 40-char commit SHA.
+
+    Mutable tag refs (`actions/checkout@v4`) are a supply-chain hole: a
+    malicious or compromised tag reassignment silently ships bad code.
+    SHAs are immutable. An optional trailing `# vX.Y.Z` comment is
+    allowed for human readability.
+    """
+    import re
+
+    if not _CI_YML.is_file():
+        pytest.fail(f"CI workflow not found at {_CI_YML}")
+
+    text = _CI_YML.read_text()
+    uses_lines = [
+        line.strip()
+        for line in text.splitlines()
+        if re.match(r"^\s*-?\s*uses:\s", line)
+    ]
+    assert uses_lines, "CI workflow has no `uses:` lines"
+
+    # Strip leading "- uses:" / "uses:" to isolate the action ref.
+    sha_pattern = re.compile(
+        r"^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+(?:/[a-zA-Z0-9._/-]+)?@[a-f0-9]{40}(\s+#.*)?$"
+    )
+
+    unpinned: list[str] = []
+    for line in uses_lines:
+        ref = re.sub(r"^\s*-?\s*uses:\s*", "", line)
+        if not sha_pattern.match(ref):
+            unpinned.append(ref)
+
+    assert not unpinned, (
+        f"CI actions must be pinned to 40-char SHAs; found unpinned refs:\n"
+        + "\n".join(f"  {r}" for r in unpinned)
+    )
+
+
 def test_ci_env_block_exports_pythonhashseed() -> None:
     """The job env: block must export PYTHONHASHSEED from matrix."""
     if not _CI_YML.is_file():
