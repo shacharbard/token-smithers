@@ -388,30 +388,48 @@ def _run_impl(argv: list[str]) -> int:
     # (emoji, accented filenames, UTF-8 git log) never crashes decode. The
     # C-locale env above only affects the child's internal formatting — it
     # does NOT force the pipe encoding.
-    if wrap_argv is not None:
-        # C1: argv-array protocol. subprocess.run(argv, shell=False) — no
-        # shell is ever invoked, so filenames with $(), backticks, ;, quotes
-        # are passed through as literal arguments.
-        result = subprocess.run(
-            wrap_argv,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            encoding="utf-8",
-            errors="replace",
-            env=clean_env,
-            shell=False,
-        )
-    else:
-        # Legacy TSIEV_WRAP_CMD shell-string path (DeprecationWarning already
-        # emitted by _resolve_wrap_command).
-        result = subprocess.run(
-            ["bash", "-c", cmd],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            encoding="utf-8",
-            errors="replace",
-            env=clean_env,
-        )
+    #
+    # H2: wrap the subprocess call in try/except KeyboardInterrupt so
+    # Ctrl-C exits cleanly with code 130 (standard SIGINT exit) instead
+    # of dumping a Python traceback. The child is in the same process
+    # group (start_new_session defaults to False) so the tty already
+    # delivered SIGINT to it — we just need to not re-raise in the parent.
+    try:
+        if wrap_argv is not None:
+            # C1: argv-array protocol. subprocess.run(argv, shell=False) — no
+            # shell is ever invoked, so filenames with $(), backticks, ;,
+            # quotes are passed through as literal arguments.
+            result = subprocess.run(
+                wrap_argv,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                encoding="utf-8",
+                errors="replace",
+                env=clean_env,
+                shell=False,
+            )
+        else:
+            # Legacy TSIEV_WRAP_CMD shell-string path (DeprecationWarning
+            # already emitted by _resolve_wrap_command).
+            result = subprocess.run(
+                ["bash", "-c", cmd],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                encoding="utf-8",
+                errors="replace",
+                env=clean_env,
+            )
+    except KeyboardInterrupt:
+        # H2: Try to flush the ring buffer with whatever we've captured
+        # (if anything), then exit 130 quietly. Telemetry best-effort.
+        try:
+            buf = _get_ring_buffer()
+            buf.append("")  # force a flush tick even if we have no bytes
+        except Exception:  # noqa: BLE001
+            pass
+        sys.stdout.flush()
+        sys.stderr.flush()
+        return 130
 
     raw_stdout = result.stdout
     raw_stderr = result.stderr
