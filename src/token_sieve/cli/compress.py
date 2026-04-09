@@ -34,26 +34,61 @@ from token_sieve.cli._session import session_id as _session_id
 logger = logging.getLogger(__name__)
 
 
-def _run_async(coro) -> None:
-    """Run a coroutine synchronously, handling both fresh and running event loops.
+def _loop_is_running() -> bool:
+    """Return True if the calling thread is inside a running asyncio loop.
 
-    When called from within a running event loop (e.g., pytest-asyncio tests),
-    schedules the coroutine as a task on the running loop using run_coroutine_threadsafe.
-    When no loop is running, creates a new one via asyncio.run().
+    Uses asyncio.get_running_loop() (3.7+) which does NOT emit the
+    DeprecationWarning that asyncio.get_event_loop() does on 3.12+.
     """
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # Running inside an existing loop (e.g., test environment)
-            import concurrent.futures
-
-            future = asyncio.run_coroutine_threadsafe(coro, loop)
-            future.result(timeout=5)
-        else:
-            asyncio.run(coro)
+        asyncio.get_running_loop()
+        return True
     except RuntimeError:
-        # No event loop at all — create one
-        asyncio.run(coro)
+        return False
+
+
+# M3: a single small thread pool shared by _run_async / _run_async_bool so
+# we never create one daemon thread per call and never leak them when the
+# 5s timeout fires. Two workers is plenty: the only caller is compress.py
+# and it invokes async helpers sequentially.
+_ASYNC_EXECUTOR: "concurrent.futures.ThreadPoolExecutor | None" = None
+import concurrent.futures  # noqa: E402
+
+
+def _get_async_executor() -> "concurrent.futures.ThreadPoolExecutor":
+    global _ASYNC_EXECUTOR
+    if _ASYNC_EXECUTOR is None:
+        _ASYNC_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="tsiev-async"
+        )
+    return _ASYNC_EXECUTOR
+
+
+def _run_async(coro) -> None:
+    """Run a coroutine synchronously, handling both fresh and running loops.
+
+    When no loop is running in the calling thread, runs via asyncio.run().
+    When a loop IS running (pytest-asyncio, embedded REPL), submits to a
+    small shared ThreadPoolExecutor where asyncio.run() can spin a fresh
+    loop. Bounded timeout prevents hangs and future cancellation cleans
+    up the worker.
+    """
+    if not _loop_is_running():
+        try:
+            asyncio.run(coro)
+        except Exception:  # noqa: BLE001  — fire-and-forget
+            pass
+        return
+
+    try:
+        future = _get_async_executor().submit(asyncio.run, coro)
+        future.result(timeout=5)
+    except concurrent.futures.TimeoutError:
+        # Best-effort cancel; the executor worker will drain on shutdown.
+        # We deliberately do not raise — telemetry must never break compress.
+        pass
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _run_async_bool(coro_or_val) -> bool:
@@ -67,31 +102,17 @@ def _run_async_bool(coro_or_val) -> bool:
         # Already a plain value (e.g., synchronous mock in tests)
         return bool(coro_or_val)
 
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # Running in async context (e.g., pytest-asyncio).
-            # Spin a new event loop in a daemon thread to avoid deadlock.
-            import threading
-
-            result_holder: list = []
-
-            def run_in_thread():
-                new_loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(new_loop)
-                try:
-                    result_holder.append(new_loop.run_until_complete(coro_or_val))
-                except Exception:  # noqa: BLE001
-                    result_holder.append(False)
-                finally:
-                    new_loop.close()
-
-            t = threading.Thread(target=run_in_thread, daemon=True)
-            t.start()
-            t.join(timeout=5)
-            return bool(result_holder[0]) if result_holder else False
-        else:
+    if not _loop_is_running():
+        try:
             return bool(asyncio.run(coro_or_val))
+        except Exception:  # noqa: BLE001
+            return False
+
+    try:
+        future = _get_async_executor().submit(asyncio.run, coro_or_val)
+        return bool(future.result(timeout=5))
+    except concurrent.futures.TimeoutError:
+        return False
     except Exception:  # noqa: BLE001
         return False
 
