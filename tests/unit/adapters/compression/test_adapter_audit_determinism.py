@@ -21,6 +21,7 @@ from __future__ import annotations
 import importlib
 import inspect
 import pkgutil
+import warnings
 from typing import Any, Callable
 
 import pytest
@@ -196,7 +197,13 @@ def _discover_adapter_classes() -> list[type]:
         full = f"{_adapters_pkg.__name__}.{modname}"
         try:
             module = importlib.import_module(full)
-        except Exception:  # noqa: BLE001 — adapter modules with optional deps may fail
+        except Exception as exc:  # noqa: BLE001 — adapter modules with optional deps may fail
+            # M11 fix: surface broken imports instead of silently dropping them.
+            warnings.warn(
+                f"Adapter discovery skipped module {full}: {exc!r}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             continue
         for name, obj in inspect.getmembers(module, inspect.isclass):
             if obj.__module__ != full:
@@ -210,6 +217,13 @@ def _discover_adapter_classes() -> list[type]:
 
 
 _DISCOVERED = _discover_adapter_classes()
+
+# M11 fix: hard floor. If this fires, a broken import is dropping adapters.
+# The current inventory is ~25; 20 gives headroom without blinding the audit.
+assert len(_DISCOVERED) >= 20, (
+    f"Adapter discovery returned only {len(_DISCOVERED)} classes; "
+    f"expected >= 20. Broken imports?"
+)
 
 
 def test_adapter_discovery_returns_at_least_twenty_classes() -> None:
