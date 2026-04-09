@@ -227,6 +227,88 @@ class TestMetricsFileWriterAtomicity:
         assert dst == str(metrics_path)
 
 
+class TestMetricsFileWriterConcurrentProcesses:
+    """M4: concurrent proxies sharing a metrics.json must not corrupt it.
+
+    On POSIX, ``flush()`` takes an ``fcntl.flock(LOCK_EX)`` on the tmp
+    sibling before writing + ``os.replace()``. This serializes the
+    atomic-write window across processes so last-writer-wins is
+    acceptable but file corruption is not.
+
+    Note: M4 was folded into the H3 commit earlier in this batch —
+    the atomic-write path is the same code path that takes the lock.
+    These tests are here to lock the concurrent-safety invariant in
+    place so a future change can't regress it without noticing.
+    """
+
+    def test_two_writers_same_path_no_corruption(self, tmp_path: Path) -> None:
+        """Two MetricsFileWriter instances writing the same path concurrently
+        from threads must never leave a torn or zero-byte file on disk.
+
+        Threads are a conservative proxy for processes here: the flock on
+        POSIX is per-fd, and both threads open their own fd via os.open,
+        so they race just like two processes would on the tmp sibling."""
+        from token_sieve.domain.metrics import InMemoryMetricsCollector
+        from token_sieve.server.metrics_writer import MetricsFileWriter
+
+        metrics_path = tmp_path / "metrics.json"
+
+        collector_a = InMemoryMetricsCollector()
+        collector_b = InMemoryMetricsCollector()
+        for _ in range(20):
+            collector_a.record(
+                CompressionEvent(
+                    original_tokens=100,
+                    compressed_tokens=40,
+                    strategy_name="a",
+                    content_type=ContentType.TEXT,
+                )
+            )
+            collector_b.record(
+                CompressionEvent(
+                    original_tokens=200,
+                    compressed_tokens=60,
+                    strategy_name="b",
+                    content_type=ContentType.TEXT,
+                )
+            )
+
+        writer_a = MetricsFileWriter(collector_a, str(metrics_path))
+        writer_b = MetricsFileWriter(collector_b, str(metrics_path))
+
+        stop = threading.Event()
+        errors: list[str] = []
+
+        def loop(w: MetricsFileWriter) -> None:
+            try:
+                while not stop.is_set():
+                    w.flush()
+            except Exception as exc:  # pragma: no cover
+                errors.append(repr(exc))
+
+        t_a = threading.Thread(target=loop, args=(writer_a,))
+        t_b = threading.Thread(target=loop, args=(writer_b,))
+        t_a.start()
+        t_b.start()
+        time.sleep(0.3)
+        stop.set()
+        t_a.join(timeout=2)
+        t_b.join(timeout=2)
+
+        assert not errors, f"writers raised: {errors[:3]}"
+
+        # Final state must be fully valid JSON from exactly one of the
+        # writers (last-writer-wins). Either "a" or "b" should be the
+        # winning strategy; no mixed/torn content.
+        text = metrics_path.read_text()
+        assert text, "final file is empty"
+        data = json.loads(text)
+        strategies = set(data["strategy_breakdown"].keys())
+        assert strategies in ({"a"}, {"b"}), (
+            f"expected exactly one writer's state, got {strategies}"
+        )
+
+
 class TestStatsReaderRetry:
     """H3: `ts stats` reader must retry on transient JSONDecodeError."""
 
