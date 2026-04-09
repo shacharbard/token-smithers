@@ -355,3 +355,148 @@ class TestNewHookWiring:
         )
         assert not compress_remains, "bash-compress-rewrite.sh not removed by undo"
         assert not webfetch_remains, "webfetch-redirect.sh not removed by undo"
+
+
+class TestInstallHooksH6Concurrency:
+    """H6: install_hooks must hold an exclusive flock and fsync writes."""
+
+    def test_concurrent_installs_do_not_corrupt_json(
+        self, tmp_path: Path
+    ) -> None:
+        """Two threads installing at once produce valid JSON with no data loss."""
+        import threading
+
+        from token_sieve.cli.setup import install_hooks
+
+        settings_path = tmp_path / "settings.json"
+        # Seed with a benign pre-existing unrelated setting
+        settings_path.write_text(json.dumps({"seeded": True, "hooks": {"PreToolUse": []}}))
+
+        errors: list[BaseException] = []
+
+        def worker() -> None:
+            try:
+                install_hooks(settings_path)
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors, f"Concurrent install raised: {errors}"
+
+        # File must still be valid JSON after concurrent writes.
+        data = json.loads(settings_path.read_text())
+        # The pre-existing seeded key must survive all races.
+        assert data.get("seeded") is True, (
+            "Concurrent install clobbered unrelated settings key — last-writer-wins corruption"
+        )
+        # Hooks must be installed exactly once (dedup must hold across races).
+        pre_tool_use = data.get("hooks", {}).get("PreToolUse", [])
+        bash_compress_count = sum(
+            1
+            for e in pre_tool_use
+            for h in e.get("hooks", [])
+            if "bash-compress-rewrite.sh" in str(h.get("command", ""))
+        )
+        assert bash_compress_count == 1, (
+            f"Expected exactly 1 bash-compress-rewrite hook entry, got {bash_compress_count}"
+        )
+
+    def test_atomic_write_fsyncs_tmp_and_parent_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """_atomic_write must fsync the tmp file fd before rename and the parent dir after."""
+        import os as os_mod
+
+        if os_mod.name != "posix":
+            pytest.skip("POSIX-only: fsync of parent dir is not meaningful on Windows")
+
+        from token_sieve.cli import setup as setup_mod
+
+        fsync_calls: list[int] = []
+        original_fsync = os_mod.fsync
+
+        def tracking_fsync(fd: int) -> None:
+            fsync_calls.append(fd)
+            original_fsync(fd)
+
+        monkeypatch.setattr(setup_mod.os, "fsync", tracking_fsync, raising=False)
+        # Also cover top-level os module lookups
+        monkeypatch.setattr("os.fsync", tracking_fsync)
+
+        settings_path = tmp_path / "settings.json"
+        setup_mod._atomic_write(settings_path, {"ok": True})
+
+        assert len(fsync_calls) >= 2, (
+            f"Expected fsync on tmp fd AND parent dir fd, got {len(fsync_calls)} call(s)"
+        )
+        # And the file landed
+        assert json.loads(settings_path.read_text()) == {"ok": True}
+
+
+class TestInstallHooksH6DedupPrecision:
+    """H6: dedup must not collapse hooks whose command contains a superstring of ours."""
+
+    def test_dedup_does_not_collide_with_superstring_scripts(
+        self, tmp_path: Path
+    ) -> None:
+        """A pre-existing hook whose command contains 'pre-bash-compress-rewrite.sh'
+        must not prevent installation of our 'bash-compress-rewrite.sh' hook."""
+        from token_sieve.cli.setup import install_hooks
+
+        settings_path = tmp_path / "settings.json"
+        # Seed with a foreign hook whose script name is a SUPERSTRING of ours.
+        settings_path.write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "PreToolUse": [
+                            {
+                                "matcher": "Bash",
+                                "hooks": [
+                                    {
+                                        "type": "command",
+                                        # Contains 'bash-compress-rewrite.sh' as a substring
+                                        # — substring `in` check would falsely match.
+                                        "command": "bash /some/path/pre-bash-compress-rewrite.sh",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            )
+        )
+
+        install_hooks(settings_path)
+
+        data = json.loads(settings_path.read_text())
+        pre_tool_use = data["hooks"]["PreToolUse"]
+
+        # Collect commands that end in the EXACT script name we care about.
+        def is_ours(h_cmd: str) -> bool:
+            # An "ours" hook ends with `bash-compress-rewrite.sh  # token-sieve`
+            return "# token-sieve" in h_cmd and "bash-compress-rewrite.sh" in h_cmd
+
+        ours_count = sum(
+            1
+            for e in pre_tool_use
+            for h in e.get("hooks", [])
+            if is_ours(str(h.get("command", "")))
+        )
+        assert ours_count == 1, (
+            f"Expected our bash-compress-rewrite.sh hook to be installed "
+            f"despite superstring collision, got {ours_count}"
+        )
+
+        # Original foreign hook must also still be present.
+        foreign_remains = any(
+            "pre-bash-compress-rewrite.sh" in str(h.get("command", ""))
+            for e in pre_tool_use
+            for h in e.get("hooks", [])
+        )
+        assert foreign_remains, "Foreign pre-existing hook was removed"
