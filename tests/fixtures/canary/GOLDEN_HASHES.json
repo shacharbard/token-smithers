@@ -1,0 +1,7 @@
+{
+  "cargo_build.txt": "a8351667ad7752178133af620e394ee50e9bb858f669212648f8df084c13f00c",
+  "git_log.txt": "3fd6cc3aa547fdddf5080b209afce73872094c3d0836f7e3f5c8440677448a4a",
+  "large_json.txt": "6dfbd5508ef6c398c4923c528a88b28e69f2c2cd7e222acd69df2bcf2428fdc0",
+  "pytest_failing.txt": "73bc5bb14f4c0e38b2bf9439e84bf33597d718f251fcb78ad1a2a33590f9f04f",
+  "pytest_passing.txt": "ac0b8dc06ee0ffc3a5e83749179a29422bcbe24aabbc2118f12443807073c3b6"
+}
