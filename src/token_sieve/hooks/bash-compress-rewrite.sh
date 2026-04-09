@@ -63,8 +63,11 @@ else:
         print('0')
 " 2>/dev/null) || { exit 0; }
 
-# Parse the three-line result using pure-bash parameter expansion
-# (avoids head/tail subprocesses that can trip pipefail with SIGPIPE).
+# Parse the three-line result using pure-bash parameter expansion.
+# M13 invariant: do NOT introduce `head`/`tail` pipes here. Under
+# `set -euo pipefail` they can exit 141 (SIGPIPE) on early pipe close,
+# which `set -e` would propagate and block legitimate commands.
+# Parameter expansion stays in-process and is SIGPIPE-free.
 QUOTED_CMD=${RESULT%%$'\n'*}
 _REST=${RESULT#*$'\n'}
 FLAG=${_REST%%$'\n'*}

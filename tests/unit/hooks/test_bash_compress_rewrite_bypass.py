@@ -178,6 +178,42 @@ class TestBashCompressRewriteBypassAnchoring:
             f"Leading whitespace should not defeat inline detection; got: {rewritten}"
         )
 
+    def test_hook_survives_strict_pipefail(self) -> None:
+        """M13: the hook must exit 0 under `bash -euo pipefail` with no pipe parsing.
+
+        Previously the hook parsed a two-line RESULT via
+        `echo "$RESULT" | head -1` and `tail -1`. Under strict pipefail,
+        `head -1` can exit 141 (SIGPIPE) when it closes the pipe early,
+        which `set -e` would propagate as a non-zero exit from the hook,
+        blocking legitimate commands. The fix switches to pure-bash
+        parameter expansion (no subprocess pipe parsing).
+
+        This test runs the hook explicitly under `bash -euo pipefail`
+        with a normal command and asserts exit 0 + valid JSON output.
+        """
+        import os
+
+        hook_input = json.dumps({"tool_input": {"command": "pytest tests/unit/"}})
+        result = subprocess.run(
+            ["bash", "-euo", "pipefail", str(HOOK_PATH)],
+            input=hook_input,
+            capture_output=True,
+            text=True,
+            env=os.environ.copy(),
+        )
+        assert result.returncode == 0, (
+            f"Hook must exit 0 under strict pipefail; got rc={result.returncode}, "
+            f"stderr={result.stderr!r}"
+        )
+        assert result.stdout.strip(), "Hook should emit JSON on stdout"
+        parsed = json.loads(result.stdout)
+        rewritten = (
+            parsed.get("hookSpecificOutput", {})
+            .get("updatedInput", {})
+            .get("command", "")
+        )
+        assert "python3 -m token_sieve compress" in rewritten
+
     def test_canonical_inline_still_detected(self) -> None:
         """Regression: the canonical `NO_COMPRESS=1 <cmd>` form still works."""
         output = run_hook("NO_COMPRESS=1 pytest tests/foo.py")
