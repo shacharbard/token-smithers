@@ -230,10 +230,28 @@ def _run_stats(full: bool = False) -> int:
         )
         return 1
 
-    try:
-        data = json.loads(Path(metrics_path).read_text())
-    except (json.JSONDecodeError, OSError) as exc:
-        print(f"Error: failed to read metrics: {exc}", file=sys.stderr)
+    # H3 fix: retry on transient JSONDecodeError — a concurrent writer may
+    # still be mid-flush when we read. Atomic writes via os.replace() make
+    # torn reads rare, but filesystems without rename atomicity (or stale
+    # nfs caches) can still produce a partial view. Retry 3× with 50ms
+    # backoff before giving up.
+    import time as _time
+
+    data = None
+    last_exc: Exception | None = None
+    for _attempt in range(3):
+        try:
+            data = json.loads(Path(metrics_path).read_text())
+            break
+        except json.JSONDecodeError as exc:
+            last_exc = exc
+            _time.sleep(0.05)
+            continue
+        except OSError as exc:
+            last_exc = exc
+            break
+    if data is None:
+        print(f"Error: failed to read metrics: {last_exc}", file=sys.stderr)
         return 1
 
     summary = data.get("session_summary", {})
