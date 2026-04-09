@@ -49,6 +49,8 @@ class BM25SentenceSelector:
         min_sentences: Minimum sentences to keep regardless of ratio.
     """
 
+    deterministic = True
+
     # H9 fix: upper bound on input sentences to prevent O(n*m) memory explosion
     _MAX_SENTENCES: int = 2000
 

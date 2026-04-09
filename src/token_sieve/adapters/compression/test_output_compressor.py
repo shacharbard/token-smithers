@@ -60,6 +60,8 @@ class TestOutputCompressor:
     Removes: individual PASSED/ok lines.
     """
 
+    deterministic = True
+
     def can_handle(self, envelope: ContentEnvelope) -> bool:
         """Return True when content looks like test runner output."""
         if envelope.content_type not in (ContentType.TEXT, ContentType.CLI_OUTPUT):

@@ -19,6 +19,8 @@ class WhitespaceNormalizer:
     Satisfies CompressionStrategy protocol structurally.
     """
 
+    deterministic = True
+
     _HANDLED_TYPES = frozenset({ContentType.TEXT, ContentType.JSON, ContentType.CODE})
 
     def can_handle(self, envelope: ContentEnvelope) -> bool:

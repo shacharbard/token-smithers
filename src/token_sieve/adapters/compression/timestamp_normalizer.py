@@ -28,6 +28,8 @@ class TimestampNormalizer:
     Satisfies CompressionStrategy protocol structurally.
     """
 
+    deterministic = True
+
     def can_handle(self, envelope: ContentEnvelope) -> bool:
         """Accept content containing ISO-8601 timestamp patterns."""
         return bool(_ISO_PATTERN.search(envelope.content))

@@ -47,6 +47,8 @@ class ErrorStackCompressor:
     Lossy adapter: off by default, opt-in via ``enabled=True``.
     """
 
+    deterministic = True
+
     def __init__(self, *, enabled: bool = False) -> None:
         self._enabled = enabled
 

@@ -18,6 +18,8 @@ class TruncationCompressor:
     Satisfies CompressionStrategy protocol structurally.
     """
 
+    deterministic = True
+
     def __init__(
         self,
         max_tokens: int = 4096,

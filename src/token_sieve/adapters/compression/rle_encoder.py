@@ -25,6 +25,8 @@ class RunLengthEncoder:
     Satisfies CompressionStrategy protocol structurally.
     """
 
+    deterministic = True
+
     def can_handle(self, envelope: ContentEnvelope) -> bool:
         """Accept content with 3+ consecutive identical lines or JSON array elements."""
         return self._has_repeats(envelope.content)

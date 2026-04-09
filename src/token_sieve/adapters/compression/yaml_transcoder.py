@@ -25,6 +25,8 @@ class YamlTranscoder:
     Satisfies CompressionStrategy protocol structurally.
     """
 
+    deterministic = True
+
     def can_handle(self, envelope: ContentEnvelope) -> bool:
         """Accept valid JSON that is not already transformed and not TOON-eligible."""
         if envelope.metadata.get("transformed_by"):

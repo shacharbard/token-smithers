@@ -527,6 +527,8 @@ class TreeSitterASTExtractor:
             passes through unchanged.
     """
 
+    deterministic = True
+
     def __init__(
         self,
         *,

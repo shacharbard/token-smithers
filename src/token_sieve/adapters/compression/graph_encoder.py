@@ -28,6 +28,8 @@ class GraphAdjacencyEncoder:
     Satisfies CompressionStrategy protocol structurally.
     """
 
+    deterministic = True
+
     def can_handle(self, envelope: ContentEnvelope) -> bool:
         """Return True if content is JSON with graph-like keys and array values."""
         content = envelope.content.strip()

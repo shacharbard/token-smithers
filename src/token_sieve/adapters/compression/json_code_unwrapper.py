@@ -51,6 +51,8 @@ class JsonCodeUnwrapper:
     Satisfies CompressionStrategy protocol structurally.
     """
 
+    deterministic = True
+
     def __init__(self, **kwargs: Any) -> None:  # noqa: ARG002
         """Accept kwargs for AdapterConfig.settings forward-compatibility."""
         self._last_parsed: dict[str, Any] | None = None

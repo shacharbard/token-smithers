@@ -24,6 +24,8 @@ class NullFieldElider:
     Satisfies CompressionStrategy protocol structurally.
     """
 
+    deterministic = True
+
     def can_handle(self, envelope: ContentEnvelope) -> bool:
         """Accept all content types -- attempts JSON parse, passes through on failure."""
         return True

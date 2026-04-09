@@ -30,6 +30,8 @@ class KeyAliasingStrategy:
         min_key_length: Minimum character length of key to qualify (default 10).
     """
 
+    deterministic = True
+
     def __init__(
         self,
         min_occurrences: int = 5,

@@ -212,6 +212,21 @@ def _discover_adapter_classes() -> list[type]:
 _DISCOVERED = _discover_adapter_classes()
 
 
+def test_semantic_diff_is_declared_non_deterministic() -> None:
+    """A4: SemanticDiffStrategy must be declared deterministic=False.
+
+    Its output depends on state persisted across compress() calls in
+    DiffStateStore. The audit only passed before this fix because the
+    test harness constructed a fresh store per run. Marking it False is
+    the honest declaration and enforces that Phase 10 caching code
+    cannot silently treat diff output as cacheable.
+    """
+    from token_sieve.adapters.compression.semantic_diff import SemanticDiffStrategy
+
+    assert "deterministic" in SemanticDiffStrategy.__dict__
+    assert SemanticDiffStrategy.deterministic is False
+
+
 def test_all_adapters_explicitly_declare_deterministic() -> None:
     """Every discovered adapter MUST declare ``deterministic`` on its own class.
 

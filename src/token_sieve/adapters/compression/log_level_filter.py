@@ -32,6 +32,8 @@ class LogLevelFilter:
     Lossy adapter: off by default, opt-in via ``enabled=True``.
     """
 
+    deterministic = True
+
     def __init__(
         self,
         *,

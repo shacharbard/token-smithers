@@ -26,6 +26,8 @@ class SemanticDiffStrategy:
     Implements the CompressionStrategy Protocol.
     """
 
+    deterministic = False
+
     def __init__(self, store: DiffStateStore) -> None:
         self._store = store
 

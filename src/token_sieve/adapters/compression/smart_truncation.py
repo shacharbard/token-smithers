@@ -24,6 +24,8 @@ class SmartTruncation:
         tail_lines: Number of lines to preserve from the end (default 20).
     """
 
+    deterministic = True
+
     def __init__(
         self,
         head_lines: int = 50,

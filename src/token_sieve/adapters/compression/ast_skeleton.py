@@ -35,6 +35,8 @@ class ASTSkeletonExtractor:
     parse errors.
     """
 
+    deterministic = True
+
     def can_handle(self, envelope: ContentEnvelope) -> bool:
         """Detect Python source via heuristics (>=2 signals)."""
         content = envelope.content

@@ -24,6 +24,8 @@ class ToonCompressor:
     Satisfies CompressionStrategy protocol structurally.
     """
 
+    deterministic = True
+
     def __init__(self) -> None:
         # M15 fix: cache parse result between can_handle() and compress()
         self._cached_parse: tuple[list[str], list[dict[str, Any]]] | None = None

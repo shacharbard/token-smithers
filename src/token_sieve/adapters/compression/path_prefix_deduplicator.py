@@ -34,6 +34,8 @@ class PathPrefixDeduplicator:
     Satisfies CompressionStrategy protocol structurally.
     """
 
+    deterministic = True
+
     def can_handle(self, envelope: ContentEnvelope) -> bool:
         """Accept all content -- path detection happens in compress()."""
         return True

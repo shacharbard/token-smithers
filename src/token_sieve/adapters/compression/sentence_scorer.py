@@ -42,6 +42,8 @@ class SentenceScorer:
         algorithm: Summarization algorithm — 'textrank' or 'lsa' (default 'textrank').
     """
 
+    deterministic = True
+
     def __init__(
         self,
         sentence_count: int = 5,

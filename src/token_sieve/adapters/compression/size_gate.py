@@ -24,6 +24,8 @@ class SizeGate:
     Satisfies CompressionStrategy protocol structurally.
     """
 
+    deterministic = True
+
     def __init__(
         self,
         threshold: int = _DEFAULT_THRESHOLD,
