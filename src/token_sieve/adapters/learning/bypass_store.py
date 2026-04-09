@@ -352,19 +352,16 @@ class BypassStore:
         if len(matching_sessions) < _AUTO_LEARN_MIN_SESSIONS:
             return
 
-        # Check no rule already exists for this pattern
-        async with db.execute(
-            "SELECT pattern FROM bypass_rules WHERE pattern = ?",
-            (prefix,),
-        ) as cursor:
-            existing = await cursor.fetchone()
-        if existing is not None:
-            return
-
+        # H8 fix: use INSERT OR IGNORE instead of SELECT-then-INSERT so two
+        # concurrent callers crossing the threshold at the same time can't
+        # race a UNIQUE constraint failure. The PRIMARY KEY on `pattern`
+        # guarantees the second concurrent caller is silently ignored.
         now_iso = now.isoformat()
         await db.execute(
             """
-            INSERT INTO bypass_rules (pattern, source, created_at, last_reinforced_at, session_count, is_active)
+            INSERT OR IGNORE INTO bypass_rules
+                (pattern, source, created_at, last_reinforced_at,
+                 session_count, is_active)
             VALUES (?, 'learned', ?, ?, 0, 1)
             """,
             (prefix, now_iso, now_iso),
