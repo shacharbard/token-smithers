@@ -127,3 +127,91 @@ class TestInMemoryMetricsCollector:
         assert DEFAULT_MAX_EVENTS == 10_000
         collector = InMemoryMetricsCollector()
         assert collector._events.maxlen == 10_000
+
+    # --- H4: O(1) amortized summaries via rolling totals ---
+
+    def test_session_summary_is_o1_not_full_scan(self, make_event):
+        """session_summary() must not iterate the events collection.
+
+        We enforce this by monkeypatching the events collection's __iter__ to
+        raise; any code that still scans events will blow up. Rolling totals
+        held on the collector itself should make this unnecessary.
+        """
+        from token_sieve.domain.metrics import InMemoryMetricsCollector
+
+        collector = InMemoryMetricsCollector()
+        for i in range(100):
+            collector.record(
+                make_event(
+                    original_tokens=10,
+                    compressed_tokens=4,
+                    strategy_name="alpha" if i % 2 == 0 else "beta",
+                )
+            )
+
+        # Sabotage the events container: summary code MUST NOT iterate it.
+        class _Tripwire:
+            def __iter__(self):
+                raise AssertionError(
+                    "session_summary / strategy_breakdown must not iterate _events"
+                )
+
+            def __len__(self):
+                return 100
+
+        collector._events = _Tripwire()  # type: ignore[assignment]
+
+        summary = collector.session_summary()
+        assert summary["total_original_tokens"] == 1000
+        assert summary["total_compressed_tokens"] == 400
+        assert summary["event_count"] == 100
+        assert summary["total_savings_ratio"] == pytest.approx(0.6)
+
+        breakdown = collector.strategy_breakdown()
+        assert set(breakdown.keys()) == {"alpha", "beta"}
+        assert breakdown["alpha"]["count"] == 50
+        assert breakdown["beta"]["count"] == 50
+        assert breakdown["alpha"]["total_original_tokens"] == 500
+        assert breakdown["beta"]["total_compressed_tokens"] == 200
+
+    def test_rolling_totals_correct_after_deque_eviction(self, make_event):
+        """When max_events bound forces eviction, rolling totals must decrement
+        for evicted events — otherwise they diverge from reality."""
+        from token_sieve.domain.metrics import InMemoryMetricsCollector
+
+        collector = InMemoryMetricsCollector(max_events=3)
+        # Record 5 events; first 2 will be evicted.
+        for i in range(5):
+            collector.record(
+                make_event(
+                    original_tokens=100,
+                    compressed_tokens=40,
+                    strategy_name="s",
+                )
+            )
+
+        summary = collector.session_summary()
+        # Only the 3 retained events should count.
+        assert summary["event_count"] == 3
+        assert summary["total_original_tokens"] == 300
+        assert summary["total_compressed_tokens"] == 120
+
+        breakdown = collector.strategy_breakdown()
+        assert breakdown["s"]["count"] == 3
+        assert breakdown["s"]["total_original_tokens"] == 300
+        assert breakdown["s"]["total_compressed_tokens"] == 120
+
+    def test_rolling_totals_drop_strategy_when_all_evicted(self, make_event):
+        """After a strategy's last event is evicted, it should disappear from
+        strategy_breakdown (count == 0 entries must not linger)."""
+        from token_sieve.domain.metrics import InMemoryMetricsCollector
+
+        collector = InMemoryMetricsCollector(max_events=2)
+        collector.record(make_event(strategy_name="old", original_tokens=10, compressed_tokens=5))
+        collector.record(make_event(strategy_name="new", original_tokens=20, compressed_tokens=8))
+        collector.record(make_event(strategy_name="new", original_tokens=30, compressed_tokens=12))
+        # "old" should now be evicted.
+
+        breakdown = collector.strategy_breakdown()
+        assert "old" not in breakdown
+        assert breakdown["new"]["count"] == 2
