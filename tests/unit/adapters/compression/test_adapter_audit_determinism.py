@@ -212,6 +212,47 @@ def _discover_adapter_classes() -> list[type]:
 _DISCOVERED = _discover_adapter_classes()
 
 
+def test_adapter_discovery_returns_at_least_twenty_classes() -> None:
+    """M11: guard against silent adapter dropout.
+
+    The discovery helper previously caught all import exceptions with a
+    bare ``continue`` so a broken adapter module became invisible to the
+    audit. This test asserts the discovered count is at least 20 — the
+    current inventory is ~25, and 20 is a safety floor that still catches
+    a multi-module regression.
+    """
+    assert len(_DISCOVERED) >= 20, (
+        f"Adapter discovery returned only {len(_DISCOVERED)} classes; "
+        f"expected >= 20. A broken import is silently dropping adapters."
+    )
+
+
+def test_adapter_discovery_warns_on_import_failure(monkeypatch) -> None:
+    """M11: a failed adapter import must emit a warning, not be silent."""
+    import importlib
+    import warnings
+
+    from tests.unit.adapters.compression import test_adapter_audit_determinism as mod
+
+    real_import = importlib.import_module
+
+    def fake_import(name, *args, **kwargs):
+        if name.endswith(".whitespace_normalizer"):
+            raise ImportError("simulated broken adapter")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib, "import_module", fake_import)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        mod._discover_adapter_classes()
+
+    messages = [str(w.message) for w in caught]
+    assert any("whitespace_normalizer" in m for m in messages), (
+        f"Expected a warning mentioning the failed module; got {messages!r}"
+    )
+
+
 def test_semantic_diff_is_declared_non_deterministic() -> None:
     """A4: SemanticDiffStrategy must be declared deterministic=False.
 
