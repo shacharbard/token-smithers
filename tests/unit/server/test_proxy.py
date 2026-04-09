@@ -1089,6 +1089,134 @@ class TestProxyRunShutdown:
         metrics_writer.flush.assert_called_once()
 
 
+class TestProxyRunShutdownRealIO:
+    """H9 fix: replace mock-theater shutdown-flush tests with real-I/O ones.
+
+    The prior tests in TestProxyRunShutdown use ``MagicMock()`` for the
+    metrics writer and assert ``flush.assert_called_once()``. Nothing ever
+    touches the filesystem, so a broken atomic-write path or a silently
+    swallowed real exception would still pass. These tests exercise the
+    full path: a real ``MetricsFileWriter`` over a real ``tmp_path``, a
+    real ``InMemoryMetricsCollector`` holding a real event, and then we
+    read the resulting JSON from disk and assert its shape.
+    """
+
+    @pytest.mark.asyncio
+    async def test_run_writes_real_metrics_file_on_normal_exit(
+        self, tmp_path
+    ) -> None:
+        """After ProxyServer.run() exits, metrics.json exists, is valid JSON,
+        and contains the session_summary / strategy_breakdown keys populated
+        from a pre-recorded event."""
+        from unittest.mock import patch
+
+        from token_sieve.domain.metrics import InMemoryMetricsCollector
+        from token_sieve.server.metrics_writer import MetricsFileWriter
+        from token_sieve.server.proxy import ProxyServer
+
+        collector = InMemoryMetricsCollector()
+        collector.record(
+            CompressionEvent(
+                original_tokens=500,
+                compressed_tokens=120,
+                strategy_name="whitespace",
+                content_type=ContentType.TEXT,
+            )
+        )
+
+        metrics_path = tmp_path / "metrics.json"
+        writer = MetricsFileWriter(
+            collector=collector, metrics_path=str(metrics_path)
+        )
+
+        proxy = ProxyServer(
+            backend_connector=_make_fake_connector(),
+            tool_filter=_make_fake_filter(),
+            pipeline=_make_fake_pipeline(),
+            metrics_sink=_make_fake_sink(),
+            metrics_writer=writer,
+        )
+
+        class _FakeCtx:
+            async def __aenter__(self):
+                return (AsyncMock(), AsyncMock())
+
+            async def __aexit__(self, *args):
+                pass
+
+        with patch("mcp.server.stdio.stdio_server", return_value=_FakeCtx()):
+            with patch.object(proxy._server, "run", new_callable=AsyncMock):
+                await proxy.run()
+
+        # Real I/O assertions: file on disk, valid JSON, expected payload.
+        assert metrics_path.exists()
+        import json as _json
+
+        data = _json.loads(metrics_path.read_text())
+        assert "session_summary" in data
+        assert "strategy_breakdown" in data
+        assert data["session_summary"]["event_count"] == 1
+        assert data["session_summary"]["total_original_tokens"] == 500
+        assert data["session_summary"]["total_compressed_tokens"] == 120
+        assert "whitespace" in data["strategy_breakdown"]
+
+    @pytest.mark.asyncio
+    async def test_run_flushes_real_file_on_keyboard_interrupt(
+        self, tmp_path
+    ) -> None:
+        """KeyboardInterrupt from _server.run must propagate AND still flush
+        the real metrics file in the finally block."""
+        from unittest.mock import patch
+
+        from token_sieve.domain.metrics import InMemoryMetricsCollector
+        from token_sieve.server.metrics_writer import MetricsFileWriter
+        from token_sieve.server.proxy import ProxyServer
+
+        collector = InMemoryMetricsCollector()
+        collector.record(
+            CompressionEvent(
+                original_tokens=300,
+                compressed_tokens=90,
+                strategy_name="truncation",
+                content_type=ContentType.TEXT,
+            )
+        )
+
+        metrics_path = tmp_path / "metrics.json"
+        writer = MetricsFileWriter(
+            collector=collector, metrics_path=str(metrics_path)
+        )
+
+        proxy = ProxyServer(
+            backend_connector=_make_fake_connector(),
+            tool_filter=_make_fake_filter(),
+            pipeline=_make_fake_pipeline(),
+            metrics_sink=_make_fake_sink(),
+            metrics_writer=writer,
+        )
+
+        class _FakeCtx:
+            async def __aenter__(self):
+                return (AsyncMock(), AsyncMock())
+
+            async def __aexit__(self, *args):
+                pass
+
+        ki = AsyncMock(side_effect=KeyboardInterrupt())
+        with patch("mcp.server.stdio.stdio_server", return_value=_FakeCtx()):
+            with patch.object(proxy._server, "run", ki):
+                with pytest.raises(KeyboardInterrupt):
+                    await proxy.run()
+
+        # KI must propagate AND the real file must still be on disk.
+        assert metrics_path.exists()
+        import json as _json
+
+        data = _json.loads(metrics_path.read_text())
+        assert data["session_summary"]["event_count"] == 1
+        assert "truncation" in data["strategy_breakdown"]
+
+
 class TestCacheableAllowlist:
     """Item 1: Semantic cache should only be used for known-safe (read-only) tools."""
 
