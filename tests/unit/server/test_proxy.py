@@ -1088,6 +1088,53 @@ class TestProxyRunShutdown:
 
         metrics_writer.flush.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_run_logs_warning_on_flush_error(self, caplog) -> None:
+        """M5: a flush() raising OSError in the shutdown finally must be
+        logged at WARNING, not silently swallowed by ``except Exception: pass``.
+        KeyboardInterrupt / SystemExit / CancelledError must still propagate —
+        we only catch ``Exception``, not ``BaseException``.
+        """
+        import logging
+
+        from token_sieve.server.proxy import ProxyServer
+        from unittest.mock import patch
+
+        metrics_writer = MagicMock()
+        metrics_writer.flush = MagicMock(side_effect=OSError("disk full"))
+
+        proxy = ProxyServer(
+            backend_connector=_make_fake_connector(),
+            tool_filter=_make_fake_filter(),
+            pipeline=_make_fake_pipeline(),
+            metrics_sink=_make_fake_sink(),
+            metrics_writer=metrics_writer,
+        )
+
+        class _FakeCtx:
+            async def __aenter__(self):
+                return (AsyncMock(), AsyncMock())
+
+            async def __aexit__(self, *args):
+                pass
+
+        with caplog.at_level(logging.WARNING, logger="token_sieve.server.proxy"):
+            with patch("mcp.server.stdio.stdio_server", return_value=_FakeCtx()):
+                with patch.object(proxy._server, "run", new_callable=AsyncMock):
+                    await proxy.run()
+
+        # Must have logged a WARNING mentioning the flush error.
+        matching = [
+            rec
+            for rec in caplog.records
+            if rec.levelno >= logging.WARNING and "flush" in rec.getMessage().lower()
+        ]
+        assert matching, (
+            f"expected WARNING log about flush failure, got records: "
+            f"{[(r.levelname, r.getMessage()) for r in caplog.records]}"
+        )
+        assert "disk full" in matching[0].getMessage()
+
 
 class TestProxyRunShutdownRealIO:
     """H9 fix: replace mock-theater shutdown-flush tests with real-I/O ones.
