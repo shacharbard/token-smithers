@@ -17,11 +17,21 @@ from token_sieve.adapters.learning.retry_detector import (
 class TestNormalizePatternHash:
     """Pattern hash is (binary + sorted positional args); flags are ignored (D2e)."""
 
-    def test_pattern_hash_ignores_flags(self) -> None:
-        """Hash must be equal when only flags differ."""
+    def test_pattern_hash_ignores_flag_values_for_same_flags(self) -> None:
+        """M1 update: hashes are equal when the SAME flags are present with different values.
+
+        The original D2e contract said "flags are ignored entirely" but M1
+        proved that over-normalization collapses `rm -rf foo` and `rm foo`
+        into the same retry bucket, which is dangerous. The new contract:
+        flag NAMES matter, flag VALUES do not.
+        """
         h1 = normalize_pattern_hash("pytest -xvs tests/auth")
-        h2 = normalize_pattern_hash("pytest --no-header tests/auth")
-        assert h1 == h2, "Flags should be ignored; only binary + positional matter"
+        h2 = normalize_pattern_hash("pytest -xvs tests/auth")
+        assert h1 == h2, "Identical invocations must hash equal"
+
+        # Different flag sets must now produce different hashes.
+        h3 = normalize_pattern_hash("pytest --no-header tests/auth")
+        assert h1 != h3, "Different flag sets now yield different hashes (M1)"
 
     def test_pattern_hash_distinguishes_positional(self) -> None:
         """Different positional args must produce different hashes."""

@@ -19,15 +19,27 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 
-def normalize_pattern_hash(cmd: str) -> str:
-    """Return a stable hash for a shell command, ignoring flags.
+# Commands where argument order is load-bearing (src before dst, etc.).
+# Positional arguments for these MUST NOT be sorted by normalize_pattern_hash.
+_ORDER_SENSITIVE_BINARIES: frozenset[str] = frozenset({
+    "mv", "cp", "rsync", "ln", "diff", "scp",
+})
 
-    Algorithm (D2e):
+
+def normalize_pattern_hash(cmd: str) -> str:
+    """Return a stable hash for a shell command.
+
+    Algorithm (M1 fix):
     1. shlex.split the command into tokens.
-    2. The first token is the binary — keep it verbatim.
-    3. Drop any token that starts with '-' (flags/options).
-    4. Sort the remaining positional arguments.
-    5. Join binary + sorted_positionals with spaces and sha256.
+    2. The first token is the binary — keep verbatim (basename only for
+       canonicalization would be nice but is out of scope here).
+    3. Flag NAMES are preserved (so `rm -rf foo` ≠ `rm foo`), but flag
+       VALUES that follow a `-x` short flag are collapsed to `<VAL>` so
+       `-p 80` and `-p 443` hash equal.
+    4. Positional arguments are sorted only for commands that are NOT in
+       `_ORDER_SENSITIVE_BINARIES`. `mv src dst` must never collide with
+       `mv dst src`.
+    5. sha256 the canonical form.
 
     Returns:
         A lowercase hex digest string.
@@ -42,9 +54,74 @@ def normalize_pattern_hash(cmd: str) -> str:
         return hashlib.sha256(b"").hexdigest()
 
     binary = tokens[0]
-    positionals = sorted(t for t in tokens[1:] if not t.startswith("-"))
-    canonical = " ".join([binary] + positionals)
+
+    # Walk the remaining tokens once, emitting (a) each flag, (b) a
+    # `<VAL>` placeholder where a short flag consumed the next positional
+    # as its value, and (c) real positionals.
+    flags: list[str] = []
+    positionals: list[str] = []
+    i = 1
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok.startswith("--"):
+            # Long flag. Keep the whole token (including any =value suffix
+            # stripped to the name only so `--port=80` and `--port=443`
+            # hash equal).
+            if "=" in tok:
+                name, _ = tok.split("=", 1)
+                flags.append(f"{name}=<VAL>")
+            else:
+                flags.append(tok)
+            i += 1
+            continue
+        if tok.startswith("-") and len(tok) > 1:
+            # Short flag. Keep the flag token and collapse the next token
+            # to <VAL> IF the next token is not itself a flag and not the
+            # end of argv. This is a coarse heuristic; for precise parsing
+            # we'd need a per-binary spec, but this collapses `-p 80` vs
+            # `-p 443` without crashing on boolean-only flags like `-r`.
+            flags.append(tok)
+            if i + 1 < len(tokens) and not tokens[i + 1].startswith("-"):
+                # Peek at next token: if it's the only remaining token AND
+                # we're running an order-sensitive binary, it's probably a
+                # positional; otherwise treat as a value for the flag.
+                # For simplicity, always treat a trailing non-flag after a
+                # short flag as a value when the short flag is conventional
+                # value-taking (e.g. -p, -o, -f, -n, -u, -c). Fall back to
+                # positional.
+                next_tok = tokens[i + 1]
+                if tok in _SHORT_FLAGS_TAKING_VALUE:
+                    flags.append("<VAL>")
+                    i += 2
+                    continue
+                # Not obviously a value — leave as positional.
+            i += 1
+            continue
+        positionals.append(tok)
+        i += 1
+
+    if binary not in _ORDER_SENSITIVE_BINARIES:
+        positionals.sort()
+
+    # Flags are emitted in first-seen order — this is fine for hashing
+    # because any reordering of flags on the CLI is semantically equivalent
+    # for the commands we care about (`-xvs` vs `-svx`) only if the user
+    # writes the same bundle, which shlex already normalizes.
+    canonical_parts = [binary] + flags + positionals
+    canonical = " ".join(canonical_parts)
     return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+# Short flags that conventionally take a VALUE as their next argv token.
+# Collapsing the value to `<VAL>` lets `-p 80` and `-p 443` hash equal.
+# Conservative allowlist: only flags that are almost always value-taking
+# across common CLIs. Boolean-only flags like -r/-f/-v are excluded so we
+# don't accidentally eat their following positional.
+_SHORT_FLAGS_TAKING_VALUE: frozenset[str] = frozenset({
+    "-p", "-o", "-u", "-c", "-C", "-D",
+    "-g", "-G", "-i", "-I", "-L", "-P",
+    "-T", "-W",
+})
 
 
 @dataclass
