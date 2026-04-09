@@ -184,7 +184,7 @@ class TestRingBufferHardening:
         buf.append("plain-bytes-roundtrip")
         assert buf.get(1) == "plain-bytes-roundtrip"
 
-    def test_append_tolerates_operational_error(self, tmp_path, monkeypatch, caplog):
+    def test_append_tolerates_operational_error(self, tmp_path, caplog):
         """H7 fix: sqlite.OperationalError during append must be caught, logged, and dropped.
 
         Previously, an OperationalError from append() would propagate and crash
@@ -194,19 +194,37 @@ class TestRingBufferHardening:
             session_id="s1", capacity=10, db_path=str(tmp_path / "rb-oe.db")
         )
 
-        # Patch the underlying connection's execute to raise on INSERT only.
-        original_execute = buf._conn.execute  # type: ignore[union-attr]
+        # Wrap the underlying connection so execute() raises on INSERT.
+        real_conn = buf._conn
+        assert real_conn is not None
 
-        def _failing_execute(sql, *args, **kwargs):
-            if "INSERT INTO ring_buffer" in sql:
-                raise sqlite3.OperationalError("disk I/O error")
-            return original_execute(sql, *args, **kwargs)
+        class _FailingConn:
+            def __init__(self, inner):
+                self._inner = inner
 
-        monkeypatch.setattr(buf._conn, "execute", _failing_execute)  # type: ignore[union-attr]
+            def execute(self, sql, *args, **kwargs):
+                if "INSERT INTO ring_buffer" in sql:
+                    raise sqlite3.OperationalError("disk I/O error")
+                return self._inner.execute(sql, *args, **kwargs)
 
-        with caplog.at_level(logging.WARNING, logger="token_sieve.adapters.learning.ring_buffer"):
+            def commit(self):
+                return self._inner.commit()
+
+            def __getattr__(self, item):
+                return getattr(self._inner, item)
+
+        buf._conn = _FailingConn(real_conn)  # type: ignore[assignment]
+
+        with caplog.at_level(
+            logging.WARNING, logger="token_sieve.adapters.learning.ring_buffer"
+        ):
             # Must NOT raise.
             buf.append("should-be-dropped")
+
+        assert any(
+            "OperationalError" in record.message or "dropped" in record.message
+            for record in caplog.records
+        )
 
     def test_wal_mode_enabled_on_file_db(self, tmp_path):
         """H7 fix: file-backed ring buffer must use WAL for concurrent readers."""
