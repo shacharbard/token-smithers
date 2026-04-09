@@ -27,29 +27,36 @@ jobs:
             os: ubuntu-latest
             python: "3.12"
             LC_ALL: C
+            PYTHONHASHSEED: "0"
             scope: full
           # D4d lane 2: Linux 3.11 floor (full suite, C locale).
           - name: linux-3.11-c
             os: ubuntu-latest
             python: "3.11"
             LC_ALL: C
+            PYTHONHASHSEED: "0"
             scope: full
           # D4d lane 3: macOS 3.12 (full suite, C locale).
           - name: macos-3.12-c
             os: macos-latest
             python: "3.12"
             LC_ALL: C
+            PYTHONHASHSEED: "0"
             scope: full
           # D4d lane 4: locale canary — runs only the determinism subset under
           # a non-C locale so any leakage of locale-dependent formatting into
-          # compressed output is caught immediately.
+          # compressed output is caught immediately. This lane also runs with
+          # PYTHONHASHSEED=random so any dict-ordering bug masked by the pinned
+          # lanes surfaces here.
           - name: linux-3.12-locale
             os: ubuntu-latest
             python: "3.12"
             LC_ALL: de_DE.UTF-8
+            PYTHONHASHSEED: "random"
             scope: determinism-only
     env:
       LC_ALL: ${{ matrix.LC_ALL }}
+      PYTHONHASHSEED: ${{ matrix.PYTHONHASHSEED }}
     steps:
       - uses: actions/checkout@v4
 
