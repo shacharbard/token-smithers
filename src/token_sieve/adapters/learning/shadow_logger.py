@@ -14,10 +14,12 @@ from __future__ import annotations
 
 import logging
 import random
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 import zstandard
+
+from token_sieve.adapters.learning.sensitive_denylist import matches as _denylist_matches
 
 if TYPE_CHECKING:
     from token_sieve.adapters.learning.sqlite_store import SQLiteLearningStore
@@ -26,6 +28,43 @@ logger = logging.getLogger(__name__)
 
 # Maximum compressed blob size in bytes (256KB)
 _BLOB_CAP_BYTES = 256 * 1024
+
+# Maximum decompressed blob size (C3-p2 decompression-bomb guard, 8 MB).
+_BLOB_DECOMPRESS_MAX_BYTES = 8 * 1024 * 1024
+
+
+def _safe_decompress_blob(
+    blob: bytes, max_size: int = _BLOB_DECOMPRESS_MAX_BYTES
+) -> bytes:
+    """Decompress a zstd blob with a hard cap on the output size.
+
+    C3-p2 decompression-bomb guard. Streams the decoded output in chunks,
+    aborting as soon as the cumulative decompressed size exceeds *max_size*.
+    This prevents OOMs when reading attacker-controlled ``representative_blob``
+    rows whose zstd frame may declare (or stream) a huge payload from a
+    tiny compressed blob.
+
+    Raises:
+        ValueError: if the decompressed size would exceed *max_size*.
+        zstandard.ZstdError: if the blob is malformed.
+    """
+    import io
+
+    dctx = zstandard.ZstdDecompressor()
+    out = bytearray()
+    # read_to_iter streams output frames — cheap to bail on cap.
+    with dctx.stream_reader(io.BytesIO(blob)) as reader:
+        chunk_size = 64 * 1024
+        while True:
+            chunk = reader.read(chunk_size)
+            if not chunk:
+                break
+            out.extend(chunk)
+            if len(out) > max_size:
+                raise ValueError(
+                    f"decompressed blob exceeds max_size={max_size} bytes"
+                )
+    return bytes(out)
 
 
 def _sample_rate(
@@ -60,6 +99,12 @@ class ShadowLogger:
     so that shadow logging NEVER affects Claude's observed bytes (D4c).
     """
 
+    # Class-level guard: we only attempt the retention sweep once per
+    # process, lazily on the first maybe_log call that opens a store. The
+    # sweep is best-effort; failures are swallowed alongside normal
+    # fire-and-forget errors.
+    _retention_swept: bool = False
+
     def __init__(
         self,
         store: "SQLiteLearningStore",
@@ -68,6 +113,26 @@ class ShadowLogger:
         self._store = store
         self._rng = random.Random(rng_seed)
 
+    async def cleanup_old_retry_events(self, max_age_days: int = 30) -> None:
+        """Delete retry_events rows older than *max_age_days*.
+
+        C3-p2: bounds retry_events table growth. Safe to call repeatedly;
+        failures are caught and logged at DEBUG.
+        """
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=max_age_days)
+        ).isoformat()
+        try:
+            await self._store._db.execute(
+                "DELETE FROM retry_events WHERE occurred_at < ?",
+                (cutoff,),
+            )
+            await self._store._db.commit()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "ShadowLogger.cleanup_old_retry_events failed: %s", exc
+            )
+
     async def maybe_log(
         self,
         pattern_hash: str,
@@ -75,6 +140,7 @@ class ShadowLogger:
         raw_bytes: bytes,
         compressed_bytes: int,
         is_retry: bool,
+        cmd: str | None = None,
     ) -> None:
         """Conditionally sample and persist a pattern observation.
 
@@ -93,6 +159,31 @@ class ShadowLogger:
             compressed_bytes: Length of compressed output (for counter).
             is_retry: Whether this invocation was classified as a retry.
         """
+        # C3-p2: denylist short-circuit. If the raw command matches the
+        # sensitive-command denylist, do NOT log — even metadata — because
+        # the pattern_hash, raw stdout, and blob can leak credential
+        # material. The denylist fails closed on malformed quoting.
+        if cmd is not None:
+            try:
+                if _denylist_matches(cmd):
+                    return
+            except Exception as exc:  # noqa: BLE001
+                # If the denylist itself raises, be safe: drop the log.
+                logger.debug(
+                    "ShadowLogger: denylist check raised, dropping log: %s", exc
+                )
+                return
+
+        # C3-p2: lazy retention sweep — once per process. Best-effort.
+        if not ShadowLogger._retention_swept:
+            ShadowLogger._retention_swept = True
+            try:
+                await self.cleanup_old_retry_events()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "ShadowLogger: lazy retention sweep failed: %s", exc
+                )
+
         try:
             await self._do_log(
                 pattern_hash=pattern_hash,
