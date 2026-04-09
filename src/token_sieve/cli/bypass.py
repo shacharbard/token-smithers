@@ -8,17 +8,80 @@ Commands:
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import os
 import sys
 from datetime import datetime, timezone
 
+logger = logging.getLogger(__name__)
+
 # Default learning DB path (same as compress.py / stats uses)
 _DEFAULT_LEARNING_DB = os.path.expanduser("~/.token-sieve/learning.db")
+
+# Default audit log path for manual bypass add/remove operations (M10).
+_DEFAULT_AUDIT_LOG = os.path.expanduser("~/.token-sieve/bypass-audit.log")
 
 
 def _get_db_path() -> str:
     """Return the learning DB path from env or default."""
     return os.environ.get("TOKEN_SIEVE_LEARNING_DB", _DEFAULT_LEARNING_DB)
+
+
+def _get_audit_log_path() -> str:
+    """Return the bypass audit log path from env or default."""
+    return os.environ.get("TOKEN_SIEVE_BYPASS_AUDIT_LOG", _DEFAULT_AUDIT_LOG)
+
+
+def _current_user() -> str:
+    """Best-effort current-user lookup for audit logging.
+
+    Tries getpass.getuser() first (honors LOGNAME/USER env vars and the
+    pwd database), then os.getlogin() as a fallback. Returns the string
+    'unknown' if neither works (e.g., daemon context with no controlling
+    terminal).
+    """
+    try:
+        import getpass
+
+        return getpass.getuser()
+    except Exception:  # noqa: BLE001
+        try:
+            return os.getlogin()
+        except Exception:  # noqa: BLE001
+            return "unknown"
+
+
+def _append_audit(action: str, pattern: str, source: str = "manual") -> None:
+    """Append a single JSONL audit record for a bypass add/remove operation.
+
+    M10: audit is best-effort — if the write fails (unwritable directory,
+    full disk, permission error), we log at WARNING and return without
+    raising. The caller's operation must never be blocked by an audit
+    failure, because audit is diagnostic, not authoritative.
+    """
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "action": action,
+        "pattern": pattern,
+        "source": source,
+        "user": _current_user(),
+    }
+    line = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
+
+    audit_path = _get_audit_log_path()
+    try:
+        os.makedirs(os.path.dirname(audit_path) or ".", exist_ok=True)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+        fd = os.open(audit_path, flags, 0o600)
+        try:
+            os.write(fd, line)
+        finally:
+            os.close(fd)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "token_sieve: bypass audit write failed (non-fatal): %s", exc
+        )
 
 
 def run_bypass(argv: list[str]) -> int:
@@ -125,6 +188,7 @@ async def _async_bypass_add(pattern: str) -> int:
             (pattern, now, now),
         )
         await store._db.commit()
+        _append_audit("add", pattern, source="manual")
         print(f"Added manual bypass rule: {pattern!r}")
         return 0
     except Exception as exc:
@@ -161,6 +225,7 @@ async def _async_bypass_remove(pattern: str) -> int:
             (pattern,),
         )
         await store._db.commit()
+        _append_audit("remove", pattern, source="manual")
         print(f"Removed bypass rule: {pattern!r}")
         return 0
     except Exception as exc:
