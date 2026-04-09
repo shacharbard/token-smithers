@@ -116,3 +116,146 @@ class TestV7Migration:
         for table in expected_tables:
             exists = await self._table_exists(store, table)
             assert exists, f"Pre-existing table '{table}' was lost after v7 migration"
+
+
+class TestMigrationAtomicity:
+    """C4 fix: each per-version migration step must be atomic.
+
+    A crash mid-migration must leave the DB at a consistent version — either
+    fully at N or fully at N+1, never with N+1's tables half-created while
+    `schema_version` still says N.
+    """
+
+    async def test_v6_and_v7_ddl_only_run_inside_their_migration_blocks(
+        self, tmp_path
+    ) -> None:
+        """C4 fix: v6/v7 tables must not exist until their migration block runs.
+
+        The bug: the top-level `executescript(_SCHEMA_SQL + _V6_SCHEMA_SQL +
+        _V7_SCHEMA_SQL)` ran unconditionally BEFORE version detection, so a
+        DB that is only at v1 would already have v7 tables present when the
+        migration block at the bottom ran — out of order, and if that
+        migration block ever failed, the schema_version would not match
+        the tables actually on disk.
+
+        We build a v1 DB by hand, then patch the top-level executescript to
+        fail, and assert that NO v7 tables exist afterwards. Before the fix,
+        the top-level executescript has already created v7 tables. After
+        the fix, v7 DDL only runs inside the `if current_version < 7`
+        migration block.
+        """
+        db_path = str(tmp_path / "v1_hand.db")
+
+        # Step 1: build a fresh v1 DB by hand with only tool_usage + schema_version.
+        import sqlite3 as sync_sqlite
+        conn = sync_sqlite.connect(db_path)
+        conn.executescript(
+            """
+            CREATE TABLE tool_usage (
+                tool_name TEXT NOT NULL,
+                server_id TEXT NOT NULL DEFAULT 'default',
+                call_count INTEGER NOT NULL DEFAULT 0,
+                last_called_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (tool_name, server_id)
+            );
+            CREATE TABLE schema_version (
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            );
+            INSERT INTO schema_version (version, applied_at) VALUES (1, '2026-01-01');
+            """
+        )
+        conn.commit()
+        conn.close()
+
+        # Step 2: patch aiosqlite so the v7 migration INSERT schema_version raises.
+        # This simulates a crash mid-v7. We only want to verify that v7 tables
+        # do not exist as a side-effect of top-level setup code.
+        import aiosqlite
+
+        original_connect = aiosqlite.connect
+
+        class _FailOnV7Insert:
+            """Awaitable that raises when the INSERT schema_version(7) runs."""
+
+            def __init__(self, inner) -> None:
+                self._inner = inner
+
+            # Intercept `execute` synchronously so the returned object is the
+            # real aiosqlite Cursor (supports both `await` and `async with`).
+            # Raise ONLY when the call is the v7 version-record insert —
+            # simulate a crash mid-v7 migration.
+            def execute(self, sql, *args, **kwargs):
+                if (
+                    "INSERT INTO schema_version" in sql
+                    and args
+                    and args[0]
+                    and args[0][0] == 7
+                ):
+                    # Return a coroutine that raises on await.
+                    async def _raise():
+                        raise RuntimeError("injected crash mid-v7 migration")
+                    return _raise()
+                return self._inner.execute(sql, *args, **kwargs)
+
+            def __getattr__(self, item):
+                return getattr(self._inner, item)
+
+        _CrashyConn = _FailOnV7Insert
+
+        def _patched_connect(*args, **kwargs):
+            real = original_connect(*args, **kwargs)
+
+            class _Wrapper:
+                def __await__(self):
+                    async def _inner():
+                        inner_conn = await real
+                        return _CrashyConn(inner_conn)
+                    return _inner().__await__()
+
+            return _Wrapper()
+
+        import token_sieve.adapters.learning.sqlite_store as mod
+        mod.aiosqlite.connect = _patched_connect  # type: ignore[attr-defined]
+        try:
+            with pytest.raises(RuntimeError, match="injected crash"):
+                await SQLiteLearningStore.connect(db_path)
+        finally:
+            mod.aiosqlite.connect = original_connect  # type: ignore[attr-defined]
+
+        # Step 3: inspect the raw DB with sync sqlite3. Before the fix,
+        # bypass_rules will already exist because the top-level
+        # executescript created it outside any migration transaction.
+        # After the fix, bypass_rules must NOT exist.
+        conn = sync_sqlite.connect(db_path)
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+        tables = {row[0] for row in cursor.fetchall()}
+        # schema_version must reflect what actually migrated. With a fix,
+        # we expect bypass_rules/bypass_events to NOT exist since their
+        # migration block did not complete.
+        version_row = conn.execute(
+            "SELECT MAX(version) FROM schema_version"
+        ).fetchone()
+        final_version = version_row[0] if version_row else None
+        conn.close()
+
+        assert "bypass_rules" not in tables or final_version == 7, (
+            "C4 bug: bypass_rules table exists but schema_version != 7. "
+            "Top-level DDL ran before the migration block — not atomic. "
+            f"tables={tables}, final_version={final_version}"
+        )
+        assert "bypass_events" not in tables or final_version == 7, (
+            "C4 bug: bypass_events table exists but schema_version != 7. "
+            f"tables={tables}, final_version={final_version}"
+        )
+
+    async def _table_exists(self, store, table_name: str) -> bool:
+        async with store._db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (table_name,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return row is not None
