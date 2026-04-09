@@ -19,12 +19,15 @@ Escape hatches (D2f):
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import locale
 import logging
 import os
 import shlex
 import subprocess
 import sys
+import warnings
 
 from token_sieve.cli._session import session_id as _session_id
 
@@ -119,6 +122,68 @@ def _bypass_and_run_raw(cmd: str) -> int:
 _FAIL_OPEN_TEMPLATE = (
     "[token-sieve: compression failed ({type}: {msg}), raw output below — please report]"
 )
+
+
+def _resolve_wrap_command() -> tuple[str, list[str] | None, str | None]:
+    """Resolve how to invoke the wrapped user command (C1: argv-array protocol).
+
+    Returns a tuple ``(cmd_display, argv, legacy_cmd)``:
+      - ``cmd_display``: human-readable command string used for logging,
+        retry detection, denylist checks, ring buffer keys, telemetry.
+      - ``argv``: non-empty argv list when the caller used the preferred
+        ``TSIEV_WRAP_CMD_ARGV`` protocol (subprocess.run(argv, shell=False)).
+        ``None`` when falling back to the legacy shell-string path.
+      - ``legacy_cmd``: the raw shell string from ``TSIEV_WRAP_CMD`` when
+        the caller is still on the legacy protocol; ``None`` otherwise.
+
+    Exactly one of ``argv`` or ``legacy_cmd`` is non-None on success. Returns
+    ``("", None, None)`` when neither env var is set (caller should report
+    the error and exit 1).
+
+    Also pops both env vars from ``os.environ`` so they are not inherited
+    by the wrapped subprocess.
+    """
+    argv_encoded = os.environ.pop("TSIEV_WRAP_CMD_ARGV", None)
+    legacy_cmd = os.environ.pop("TSIEV_WRAP_CMD", None)
+
+    if argv_encoded:
+        try:
+            decoded = base64.b64decode(argv_encoded, validate=True).decode("utf-8")
+            argv = json.loads(decoded)
+        except (ValueError, json.JSONDecodeError) as exc:
+            print(
+                f"Error: TSIEV_WRAP_CMD_ARGV is malformed ({type(exc).__name__})",
+                file=sys.stderr,
+            )
+            return ("", None, None)
+        if not isinstance(argv, list) or not argv:
+            print(
+                "Error: TSIEV_WRAP_CMD_ARGV must decode to a non-empty JSON array",
+                file=sys.stderr,
+            )
+            return ("", None, None)
+        argv = [str(a) for a in argv]
+        try:
+            cmd_display = shlex.join(argv)
+        except Exception:  # noqa: BLE001
+            cmd_display = " ".join(argv)
+        return (cmd_display, argv, None)
+
+    if legacy_cmd:
+        warnings.warn(
+            "TSIEV_WRAP_CMD (shell-string protocol) is deprecated; please re-run "
+            "`ts setup` to switch to TSIEV_WRAP_CMD_ARGV (argv-array protocol).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        print(
+            "[token-sieve: TSIEV_WRAP_CMD (legacy shell-string) is deprecated — "
+            "please re-run `ts setup`]",
+            file=sys.stderr,
+        )
+        return (legacy_cmd, None, legacy_cmd)
+
+    return ("", None, None)
 
 # Commands whose stderr carries structured output that benefits from compression.
 # Only the first shell word (literal match) triggers the merge.
@@ -253,9 +318,15 @@ def run(argv: list[str]) -> int:
 
 def _run_impl(argv: list[str]) -> int:
     """Body of compress.run() — assumes locale is already set to C."""
-    cmd = os.environ.pop("TSIEV_WRAP_CMD", None)
+    cmd, wrap_argv, legacy_cmd = _resolve_wrap_command()
     if not cmd:
-        print("Error: TSIEV_WRAP_CMD is not set", file=sys.stderr)
+        if legacy_cmd is None and wrap_argv is None and not os.environ.get(
+            "TSIEV_WRAP_CMD_ARGV"
+        ):
+            # Distinguish "nothing set" from "set but malformed". The helper
+            # already printed the malformed-case error; handle the unset case
+            # here with the original message so existing tests still pass.
+            print("Error: TSIEV_WRAP_CMD is not set", file=sys.stderr)
         return 1
 
     # --- D5c Layer 1: built-in sensitive denylist (checked BEFORE everything) ---
@@ -313,16 +384,31 @@ def _run_impl(argv: list[str]) -> int:
         first_word = ""
     merge_stderr = first_word in _STDERR_MERGE_ALLOWLIST
 
-    # Build env without TSIEV_WRAP_CMD (already popped above)
+    # Build env without TSIEV_WRAP_CMD* (already popped above)
     clean_env = dict(os.environ)
 
-    result = subprocess.run(
-        ["bash", "-c", cmd],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env=clean_env,
-    )
+    if wrap_argv is not None:
+        # C1: argv-array protocol. subprocess.run(argv, shell=False) — no
+        # shell is ever invoked, so filenames with $(), backticks, ;, quotes
+        # are passed through as literal arguments.
+        result = subprocess.run(
+            wrap_argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=clean_env,
+            shell=False,
+        )
+    else:
+        # Legacy TSIEV_WRAP_CMD shell-string path (DeprecationWarning already
+        # emitted by _resolve_wrap_command).
+        result = subprocess.run(
+            ["bash", "-c", cmd],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=clean_env,
+        )
 
     raw_stdout = result.stdout
     raw_stderr = result.stderr

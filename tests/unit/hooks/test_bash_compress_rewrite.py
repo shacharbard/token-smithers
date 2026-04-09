@@ -24,7 +24,15 @@ class TestBashCompressRewriteHook:
     """PreToolUse:Bash hook rewrites commands into the D1 rewrite template."""
 
     def test_rewrite_emits_updated_input(self, run_hook):
-        """Normal command: hook emits hookSpecificOutput.updatedInput.command."""
+        """Normal command: hook emits hookSpecificOutput.updatedInput.command.
+
+        C1 note: the hook now prefers the argv-array protocol
+        (TSIEV_WRAP_CMD_ARGV=<base64-json>) over the legacy shell-string
+        protocol (TSIEV_WRAP_CMD=<shell-quoted>). Either is acceptable.
+        """
+        import base64
+        import json as _json
+
         result = run_hook(HOOK, {"tool_input": {"command": "pytest -xvs"}})
 
         assert result.exit_code == 0, f"Expected exit 0, got {result.exit_code}: {result.stderr}"
@@ -32,43 +40,63 @@ class TestBashCompressRewriteHook:
         hook_out = data["hookSpecificOutput"]
         assert hook_out["hookEventName"] == "PreToolUse"
         updated_cmd = hook_out["updatedInput"]["command"]
-        assert "TSIEV_WRAP_CMD=" in updated_cmd
+        assert (
+            "TSIEV_WRAP_CMD_ARGV=" in updated_cmd
+            or "TSIEV_WRAP_CMD=" in updated_cmd
+        )
         assert "python3 -m token_sieve compress --wrap-env" in updated_cmd
-        # Original command embedded in the rewrite
-        assert "pytest -xvs" in updated_cmd
+
+        # Original command is embedded either as literal tokens in the base64
+        # JSON argv, or as a shell-quoted string in the legacy fallback.
+        if "TSIEV_WRAP_CMD_ARGV=" in updated_cmd:
+            # Extract the base64 value (between single quotes).
+            import re
+
+            m = re.search(r"TSIEV_WRAP_CMD_ARGV='([^']+)'", updated_cmd)
+            assert m, f"Could not extract argv payload from {updated_cmd!r}"
+            argv = _json.loads(base64.b64decode(m.group(1)).decode("utf-8"))
+            assert argv == ["pytest", "-xvs"]
+        else:
+            assert "pytest -xvs" in updated_cmd
 
     def test_rewrite_escapes_double_quotes_in_original(self, run_hook):
-        """Command with double quotes: TSIEV_WRAP_CMD value is shell-safe.
+        """Command with double quotes: argv protocol preserves tokens verbatim.
 
-        Verifies shell escaping by extracting TSIEV_WRAP_CMD from the rewritten
-        command and confirming it round-trips through bash correctly (the original
-        command semantics are preserved). Full pipeline round-trip is Task 4.
+        C1: with the argv-array protocol, there is no shell escaping to worry
+        about — the tokens in the JSON array must exactly equal the result
+        of shlex.split on the original command.
         """
+        import base64
+        import re
+        import shlex as _shlex
+
         result = run_hook(HOOK, {"tool_input": {"command": 'echo "hi"'}})
 
         assert result.exit_code == 0
         data = json.loads(result.stdout)
         updated_cmd = data["hookSpecificOutput"]["updatedInput"]["command"]
-        assert "TSIEV_WRAP_CMD=" in updated_cmd
         assert "python3 -m token_sieve compress --wrap-env" in updated_cmd
-        # Verify TSIEV_WRAP_CMD round-trips correctly via bash eval.
-        # Extract TSIEV_WRAP_CMD value and run it as the original command.
-        # This proves the shell escaping preserves semantics.
-        extract_and_run = f"""
+
+        if "TSIEV_WRAP_CMD_ARGV=" in updated_cmd:
+            m = re.search(r"TSIEV_WRAP_CMD_ARGV='([^']+)'", updated_cmd)
+            assert m
+            argv = json.loads(base64.b64decode(m.group(1)).decode("utf-8"))
+            assert argv == _shlex.split('echo "hi"')
+        else:
+            # Legacy fallback path: verify round-trip via bash eval.
+            assert "TSIEV_WRAP_CMD=" in updated_cmd
+            extract_and_run = f"""
 set -euo pipefail
 eval "{updated_cmd.split(' python3 ')[0].strip()}"
 bash -c "$TSIEV_WRAP_CMD"
 """
-        run_result = subprocess.run(
-            ["bash", "-c", extract_and_run],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        assert "hi" in run_result.stdout, (
-            f"Round-trip failed. cmd={updated_cmd!r}, "
-            f"stdout={run_result.stdout!r}, stderr={run_result.stderr!r}"
-        )
+            run_result = subprocess.run(
+                ["bash", "-c", extract_and_run],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            assert "hi" in run_result.stdout
 
     def test_empty_command_allows_passthrough(self, run_hook):
         """Empty command string: exit 0 with no stdout JSON (allow)."""
@@ -114,7 +142,11 @@ class TestBashCompressRewriteEndToEnd:
         assert result.exit_code == 0
         data = json.loads(result.stdout)
         updated_cmd = data["hookSpecificOutput"]["updatedInput"]["command"]
-        assert "TSIEV_WRAP_CMD=" in updated_cmd
+        # C1: either protocol is acceptable; the E2E pipe must still work.
+        assert (
+            "TSIEV_WRAP_CMD_ARGV=" in updated_cmd
+            or "TSIEV_WRAP_CMD=" in updated_cmd
+        )
         assert "python3 -m token_sieve compress --wrap-env" in updated_cmd
 
         # Use the same Python executable as the test process to ensure
