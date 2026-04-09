@@ -72,3 +72,45 @@ class TestSensitiveDenylistMatcher:
     def test_first_word_only_for_unmatched_binaries(self) -> None:
         """mygpg --decrypt is NOT blocked — denylist matches exact binary names."""
         assert matches("mygpg --decrypt") is False
+
+
+class TestSensitiveDenylistEvasion:
+    """C3 fix: denylist must not be bypassed by common shell tricks.
+
+    All of these were evasions against the naive prefix matcher before C3.
+    """
+
+    def test_env_prefix_is_stripped(self) -> None:
+        """FOO=bar before a sensitive command must still match."""
+        assert matches("AWS_PROFILE=prod aws sts get-caller-identity") is True
+        assert matches("FOO=bar BAR=baz gpg --decrypt secret.gpg") is True
+
+    def test_sudo_wrapper_is_stripped(self) -> None:
+        """sudo (with or without flags) must not allow bypass."""
+        assert matches("sudo aws sts get-caller-identity") is True
+        assert matches("sudo -u root kubectl get secret mysecret") is True
+
+    def test_env_wrapper_is_stripped(self) -> None:
+        """env (with or without flags) must not allow bypass."""
+        assert matches("env aws sts get-caller-identity") is True
+        assert matches("env -i PATH=/usr/bin aws sts get-caller-identity") is True
+
+    def test_absolute_path_is_matched_by_basename(self) -> None:
+        """Absolute paths like /usr/local/bin/aws must match 'aws'."""
+        assert matches("/usr/local/bin/aws sts get-caller-identity") is True
+        assert matches("/opt/homebrew/bin/gpg --decrypt blob.gpg") is True
+
+    def test_bash_c_wrapper_is_recursively_matched(self) -> None:
+        """bash -c 'aws sts ...' must match via recursion into the quoted argument."""
+        assert matches("bash -c 'aws sts get-caller-identity'") is True
+        assert matches('sh -c "gpg --decrypt secret.gpg"') is True
+
+    def test_unterminated_quote_fails_closed(self) -> None:
+        """Malformed quoting must NOT fall open — treat as sensitive."""
+        # Prior behavior: shlex.split raises, function returned False (fail open).
+        assert matches("aws sts 'unterminated") is True
+        assert matches("gpg --decrypt 'no-close") is True
+
+    def test_combined_evasions(self) -> None:
+        """env prefix + absolute path + wrapper must still match."""
+        assert matches("sudo -E AWS_REGION=us-east-1 /usr/local/bin/aws sts get-caller-identity") is True
