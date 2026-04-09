@@ -605,6 +605,7 @@ def _run_impl(argv: list[str]) -> int:
                     raw_bytes=compression_input.encode(),
                     compressed_bytes=compressed_bytes,
                     is_retry=is_retry,
+                    cmd=cmd,
                 )
             )
     except Exception as exc:  # noqa: BLE001  — D4c: never affect output
