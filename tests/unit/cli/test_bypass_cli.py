@@ -266,3 +266,84 @@ class TestStatsWithBypass:
             )
         finally:
             os.unlink(metrics_path)
+
+
+class TestBypassCLIAuditLogM10:
+    """M10: bypass add/remove must append a JSONL audit record.
+
+    Any local shell user with write access to the learning DB can currently
+    poison bypass rules silently — there is no trail of who did what, when,
+    or via which source. The CLI must append a line to an audit log so
+    operators can detect tampering.
+    """
+
+    async def test_bypass_add_appends_audit_line(
+        self, temp_db, tmp_path, monkeypatch
+    ) -> None:
+        db_path, _store = temp_db
+        audit_path = tmp_path / "bypass-audit.log"
+
+        from token_sieve.cli.bypass import run_bypass
+
+        monkeypatch.setenv("TOKEN_SIEVE_LEARNING_DB", db_path)
+        monkeypatch.setenv("TOKEN_SIEVE_BYPASS_AUDIT_LOG", str(audit_path))
+
+        rc = run_bypass(["add", "kubectl get secret"])
+        assert rc == 0
+
+        assert audit_path.exists(), "Audit log file must be created on bypass add"
+        lines = audit_path.read_text().splitlines()
+        assert len(lines) == 1, f"Expected exactly 1 audit line, got {len(lines)}"
+
+        entry = json.loads(lines[0])
+        assert entry["action"] == "add"
+        assert entry["pattern"] == "kubectl get secret"
+        assert entry["source"] == "manual"
+        assert "timestamp" in entry and entry["timestamp"]
+        assert "user" in entry and entry["user"], "Audit entry must include user"
+
+    async def test_bypass_remove_appends_audit_line(
+        self, temp_db, tmp_path, monkeypatch
+    ) -> None:
+        db_path, _store = temp_db
+        audit_path = tmp_path / "bypass-audit.log"
+
+        from token_sieve.cli.bypass import run_bypass
+
+        monkeypatch.setenv("TOKEN_SIEVE_LEARNING_DB", db_path)
+        monkeypatch.setenv("TOKEN_SIEVE_BYPASS_AUDIT_LOG", str(audit_path))
+
+        # Seed a rule first (this also writes an audit line)
+        assert run_bypass(["add", "vault read secret/x"]) == 0
+        # Then remove
+        rc = run_bypass(["remove", "vault read secret/x"])
+        assert rc == 0
+
+        lines = audit_path.read_text().splitlines()
+        assert len(lines) == 2, (
+            f"Expected 2 audit lines (add + remove), got {len(lines)}"
+        )
+
+        remove_entry = json.loads(lines[1])
+        assert remove_entry["action"] == "remove"
+        assert remove_entry["pattern"] == "vault read secret/x"
+        assert "timestamp" in remove_entry
+
+    async def test_bypass_add_succeeds_even_if_audit_write_fails(
+        self, temp_db, tmp_path, monkeypatch, capsys
+    ) -> None:
+        """Audit log is best-effort — a failed audit write must not break the CLI."""
+        db_path, _store = temp_db
+        # Point audit log at an unwritable path (directory that doesn't exist
+        # and can't be created because its parent is a regular file)
+        bad_parent = tmp_path / "not_a_dir"
+        bad_parent.write_text("blocker")
+        bad_audit = bad_parent / "nested" / "bypass-audit.log"
+
+        from token_sieve.cli.bypass import run_bypass
+
+        monkeypatch.setenv("TOKEN_SIEVE_LEARNING_DB", db_path)
+        monkeypatch.setenv("TOKEN_SIEVE_BYPASS_AUDIT_LOG", str(bad_audit))
+
+        rc = run_bypass(["add", "aws sts get-caller-identity"])
+        assert rc == 0, "bypass add must succeed even when audit write fails"
