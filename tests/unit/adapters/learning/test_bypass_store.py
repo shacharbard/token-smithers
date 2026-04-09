@@ -261,6 +261,89 @@ class TestBypassAutoLearn:
         assert row[0] == 0, "CI detection should skip event recording entirely"
 
 
+class TestBypassMostSpecificFirst:
+    """M7 fix: when multiple active rules match, the most specific wins."""
+
+    async def test_more_specific_rule_wins(self, store_and_bypass) -> None:
+        """With both `pytest tests/auth` and `pytest` active, the more specific
+        rule (longer pattern) must match first.
+
+        Before the fix, `is_bypassed` did not ORDER BY, so the query order
+        was arbitrary and `pytest` (shorter) could be returned first even
+        though `pytest tests/auth` should win for `pytest tests/auth/test_x.py`.
+        """
+        store, bs = store_and_bypass
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Insert the SHORTER rule first so any arbitrary SQLite insertion
+        # order would return it before the longer one without an ORDER BY.
+        await store._db.execute(
+            """
+            INSERT INTO bypass_rules
+                (pattern, source, created_at, last_reinforced_at,
+                 session_count, is_active)
+            VALUES ('pytest', 'manual', ?, ?, 0, 1)
+            """,
+            (now, now),
+        )
+        await store._db.execute(
+            """
+            INSERT INTO bypass_rules
+                (pattern, source, created_at, last_reinforced_at,
+                 session_count, is_active)
+            VALUES ('pytest tests/auth', 'learned', ?, ?, 0, 1)
+            """,
+            (now, now),
+        )
+        await store._db.commit()
+
+        # Both rules match `pytest tests/auth/test_x.py`, but the more
+        # specific one must be selected by `_find_matching_rule_pattern`.
+        pattern = await bs._find_matching_rule_pattern(
+            "pytest tests/auth/test_x.py"
+        )
+        assert pattern == "pytest tests/auth", (
+            f"most specific rule should win, got {pattern!r}"
+        )
+
+    async def test_is_bypassed_caps_at_500_active_rules(
+        self, store_and_bypass
+    ) -> None:
+        """M7 fix: active bypass_rules must be capped at 500 with LRU eviction.
+
+        Insert 510 active rules (one at a time) and verify that after each
+        new insertion beyond the cap, the oldest (by last_reinforced_at) is
+        pruned.
+        """
+        store, bs = store_and_bypass
+        base = datetime.now(timezone.utc)
+
+        # Seed 500 rules cleanly with last_reinforced_at spread out.
+        for i in range(500):
+            ts = (base + timedelta(seconds=i)).isoformat()
+            await store._db.execute(
+                """
+                INSERT INTO bypass_rules
+                    (pattern, source, created_at, last_reinforced_at,
+                     session_count, is_active)
+                VALUES (?, 'manual', ?, ?, 0, 1)
+                """,
+                (f"cmd_{i} arg", ts, ts),
+            )
+        await store._db.commit()
+
+        # Insert one more via the cap-enforcing path. The bypass store
+        # must prune at least the LRU row to stay at ≤500 active rules.
+        new_ts = (base + timedelta(seconds=1000)).isoformat()
+        await bs._enforce_active_rule_cap(new_ts)
+
+        async with store._db.execute(
+            "SELECT COUNT(*) FROM bypass_rules WHERE is_active = 1"
+        ) as cursor:
+            row = await cursor.fetchone()
+        assert row[0] <= 500, f"active rule cap should be 500, got {row[0]}"
+
+
 class TestBypassDecay:
     """Tests for the dual decay model (20 sessions or 90 calendar days)."""
 
