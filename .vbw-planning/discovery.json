@@ -1,0 +1,201 @@
+{
+  "answered": [
+    {
+      "question": "How should schema virtualization work — inline rewrite, meta-tool, or hybrid?",
+      "answer": "Tiered structural compression (lossless cleanup → description compression → notation rewrite for simple tools) + frequency-aware detail levels. No meta-tools.",
+      "area": "schema-virtualization",
+      "phase": "04",
+      "date": "2026-04-01"
+    },
+    {
+      "question": "How does the user's prompt context reach the proxy for intelligent reranking?",
+      "answer": "Implicit context from tool calls flowing through proxy + tools/list_changed MCP notification. No hooks, no prompt access needed.",
+      "area": "intelligent-reranking",
+      "phase": "04",
+      "date": "2026-04-01"
+    },
+    {
+      "question": "How should system prompt compression work?",
+      "answer": "MCP server instructions only (intercept initialize response). CLAUDE.md CLI tool deferred to follow-up.",
+      "area": "system-prompt-compression",
+      "phase": "04",
+      "date": "2026-04-01"
+    },
+    {
+      "question": "Where should token savings dashboard be exposed?",
+      "answer": "Three surfaces: status line (passive, metrics file polling), CLI command, MCP resource. Shared stats collection layer.",
+      "area": "dashboard-ux",
+      "phase": "04",
+      "date": "2026-04-01"
+    },
+    {
+      "question": "How should progressive disclosure (expand result) work in MCP?",
+      "answer": "Extend FileRedirectStrategy to return compressed_summary + file_pointer. Claude expands via Read.",
+      "area": "progressive-disclosure",
+      "phase": "04",
+      "date": "2026-04-01"
+    },
+    {
+      "question": "Should there be a proxy latency budget?",
+      "answer": "No time ceiling. Token overhead principle: proxy metadata must be <5% of original result size. If net savings negative, pass through.",
+      "area": "latency-budget",
+      "phase": "04",
+      "date": "2026-04-01"
+    },
+    {
+      "question": "How should cross-session learning data be persisted?",
+      "answer": "SQLite via built-in sqlite3. ~/.token-sieve/learning.db. Shared storage layer for all learning features.",
+      "area": "persistence",
+      "phase": "04",
+      "date": "2026-04-01"
+    },
+    {
+      "question": "Should speculative prefetch be included?",
+      "answer": "Dropped from scope. Latency savings irrelevant (Claude thinking time dominates), blast radius too high.",
+      "area": "speculative-prefetch",
+      "phase": "04",
+      "date": "2026-04-01"
+    },
+    {
+      "question": "How should semantic result cache matching work?",
+      "answer": "Text heuristic (param normalization + edit distance) with exact-match fallback. No embeddings.",
+      "area": "semantic-cache",
+      "phase": "04",
+      "date": "2026-04-01"
+    }
+  ],
+  "inferred": [
+    {
+      "id": "REQ-P4-01",
+      "text": "Schema virtualization uses tiered compression with frequency-aware detail levels",
+      "priority": "Must-have",
+      "source": "Discussion: schema-virtualization"
+    },
+    {
+      "id": "REQ-P4-02",
+      "text": "Intelligent reranking uses implicit tool-call context + tools/list_changed notification",
+      "priority": "Must-have",
+      "source": "Discussion: intelligent-reranking"
+    },
+    {
+      "id": "REQ-P4-03",
+      "text": "Dashboard exposed via status line + CLI + MCP resource with shared stats layer",
+      "priority": "Must-have",
+      "source": "Discussion: dashboard-ux"
+    },
+    {
+      "id": "REQ-P4-04",
+      "text": "All learning features persist to SQLite and degrade gracefully without data",
+      "priority": "Must-have",
+      "source": "Discussion: persistence + cold-start"
+    },
+    {
+      "id": "REQ-P4-05",
+      "text": "Progressive disclosure extends FileRedirectStrategy with summary + file pointer",
+      "priority": "Must-have",
+      "source": "Discussion: progressive-disclosure"
+    },
+    {
+      "id": "REQ-P4-06",
+      "text": "Speculative prefetch excluded from Phase 04 scope",
+      "priority": "Out-of-scope",
+      "source": "Discussion: speculative-prefetch"
+    }
+  ],
+  "deferred": [
+    {
+      "idea": "CLAUDE.md compression CLI tool (token-sieve compress-config)",
+      "mentioned_during": "Phase 04 discussion — system prompt compression",
+      "date": "2026-04-01"
+    },
+    {
+      "idea": "Speculative prefetch with safety classification",
+      "mentioned_during": "Phase 04 discussion — prefetch blast radius",
+      "date": "2026-04-01"
+    },
+    {
+      "idea": "Embedding-based semantic cache matching",
+      "mentioned_during": "Phase 04 discussion — semantic cache",
+      "date": "2026-04-01"
+    },
+    {
+      "idea": "Level 2 cache stability — restructure content for partial-match prefix hits",
+      "mentioned_during": "Phase 05 discussion — cache prefix maximization",
+      "date": "2026-04-03"
+    }
+  ],
+  "answered_phase05": [
+    {
+      "question": "How should reranker work with prompt caching?",
+      "answer": "Freeze tool order at session start from learning store data. Lock for entire session. Reranking only changes between sessions.",
+      "area": "reranker-cache-tradeoff",
+      "phase": "05",
+      "date": "2026-04-03"
+    },
+    {
+      "question": "How should we tell Claude that a result was compressed?",
+      "answer": "Inline footer on all compressed results: '[Compressed: X->Y tokens. Re-call tool for full detail.]' ~15 tokens overhead.",
+      "area": "compression-transparency",
+      "phase": "05",
+      "date": "2026-04-03"
+    },
+    {
+      "question": "When should per-tool pipeline optimization kick in?",
+      "answer": "After 10 calls. Safety: periodic re-eval every 50 calls, never disable high-impact adapters (>20%), anomaly fallback for outlier results.",
+      "area": "per-tool-pipeline-learning",
+      "phase": "05",
+      "date": "2026-04-03"
+    },
+    {
+      "question": "How should negative compression be detected?",
+      "answer": "Combined: re-call detection as trigger (same tool within 2 turns), token budget tracking as measurement. After 3 regret events, reduce compression for that tool.",
+      "area": "negative-compression-detection",
+      "phase": "05",
+      "date": "2026-04-03"
+    },
+    {
+      "question": "How aggressively should we optimize for cache prefix?",
+      "answer": "Level 1 (determinism) in Phase 5 only: sorted keys, stable ordering, no random elements. Level 2 (stability/restructuring) deferred to Phase 9.",
+      "area": "cache-prefix-maximization",
+      "phase": "05",
+      "date": "2026-04-03"
+    }
+  ],
+  "answered_phase10": [
+    {
+      "question": "Phase 10 scope framing — pure ROADMAP, or bundle with hygiene and compress.py refactors?",
+      "answer": "Maximal scope: 5 ROADMAP deliverables + Phase 9 hygiene warm-up (2 DEVN-05 fixes + 2 non-determinism fixes) + compress.py threading refactors (_run_async/_run_async_bool cleanup, sync/async removal). compress.py refactor quarantined to its own wave with regression guard.",
+      "area": "scope-framing-hygiene",
+      "phase": "10",
+      "date": "2026-04-09"
+    },
+    {
+      "question": "Address the zero-PostToolUse hook gap from the hook collision audit in Phase 10?",
+      "answer": "Metrics-only PostToolUse hook. Matcher *, additive install, writes tool outcomes to Phase 3 learning store. ~1-2 days. Full CLI-wrapper output rewriting deferred to Phase 11+.",
+      "area": "posttooluse-gap",
+      "phase": "10",
+      "date": "2026-04-09"
+    },
+    {
+      "question": "Cache coherence strategy — how to pay off fuzzy-cache debt while supporting users without jCodeMunch?",
+      "answer": "Tiered cache coherence: Tier 1 content-hash manifest (universal, zero deps), Tier 2 imports-only graph via token-sieve own tree-sitter (Phase 6 reuse, 6 languages), Tier 3 optional plugin oracle interface (jCodeMunch/GitNexus, runtime detection, never critical path), plus parameter-aware cache keys for non-file-scoped tools. User challenged initial jCodeMunch-dependent framing; reframed to own the cache coherence story with zero external deps as baseline.",
+      "area": "cache-coherence-tiered",
+      "phase": "10",
+      "date": "2026-04-09"
+    },
+    {
+      "question": "Session context tracking substrate — bloom filter vs MinHash vs structural?",
+      "answer": "MinHash (datasketch) as primary substrate for content similarity + imports-graph connected-component IDs from Tier 2 as secondary cluster-tag signal. Reranker uses both. Bloom filter rejected (exact-match too weak for rephrased content). Leiden clustering deferred (connected components are simpler proxy).",
+      "area": "session-context-substrate",
+      "phase": "10",
+      "date": "2026-04-09"
+    },
+    {
+      "question": "Intent-aware compression shape — rule-based, statistical, LLM, or cluster-only?",
+      "answer": "Rule-based tool-call n-gram pattern matching + cluster-tag secondary signal from GA4. Modes: debugging, research, exploration, skimming, test-fix, refactor. Mode produces budget multiplier feeding existing adapter budgets. Novel work is the mode->budget wiring, not the rules. Statistical and LLM options rejected (corpus unavailability, determinism bias).",
+      "area": "intent-aware-shape",
+      "phase": "10",
+      "date": "2026-04-09"
+    }
+  ]
+}
