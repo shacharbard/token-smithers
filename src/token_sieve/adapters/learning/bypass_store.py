@@ -30,6 +30,9 @@ _CI_ENV_VARS = ("CI", "GITHUB_ACTIONS", "CI_PIPELINE_ID")
 _AUTO_LEARN_THRESHOLD = 10       # inline events needed
 _AUTO_LEARN_MIN_SESSIONS = 2     # distinct session_ids required
 _AUTO_LEARN_WINDOW_DAYS = 14     # calendar window
+
+# M7 fix: hard cap on active bypass rules to bound `is_bypassed` cost.
+_ACTIVE_RULE_CAP = 500
 _DECAY_SESSION_THRESHOLD = 20    # distinct non-reinforcing sessions
 _DECAY_CALENDAR_DAYS = 90        # calendar days since last reinforcement
 
@@ -246,11 +249,15 @@ class BypassStore:
         """Return True if there is an active bypass rule matching cmd.
 
         Checks bypass_rules for any row where the rule's pattern is a prefix
-        of cmd's argv and is_active=1.
+        of cmd's argv and is_active=1. M7 fix: rows are returned with the
+        LONGEST pattern first so that a more specific rule (like
+        ``pytest tests/auth``) wins over a coarser one (``pytest``) when
+        both are active.
         """
         db = self._store._db
         async with db.execute(
-            "SELECT pattern FROM bypass_rules WHERE is_active = 1"
+            "SELECT pattern FROM bypass_rules WHERE is_active = 1 "
+            "ORDER BY LENGTH(pattern) DESC"
         ) as cursor:
             rows = await cursor.fetchall()
 
@@ -367,6 +374,8 @@ class BypassStore:
             (prefix, now_iso, now_iso),
         )
         await db.commit()
+        # M7 fix: enforce active-rule cap on every insertion.
+        await self._enforce_active_rule_cap(now_iso)
 
     async def _maybe_reinforce(
         self, cmd: str, session_id: str, now_iso: str
@@ -388,10 +397,15 @@ class BypassStore:
         await db.commit()
 
     async def _find_matching_rule_pattern(self, cmd: str) -> str | None:
-        """Find the pattern of the first active rule matching cmd, or None."""
+        """Find the most specific active rule matching cmd, or None.
+
+        M7 fix: ORDER BY LENGTH(pattern) DESC so that longer (more specific)
+        patterns are evaluated first.
+        """
         db = self._store._db
         async with db.execute(
-            "SELECT pattern FROM bypass_rules WHERE is_active = 1"
+            "SELECT pattern FROM bypass_rules WHERE is_active = 1 "
+            "ORDER BY LENGTH(pattern) DESC"
         ) as cursor:
             rows = await cursor.fetchall()
 
@@ -399,6 +413,47 @@ class BypassStore:
             if _cmd_matches_pattern(cmd, pattern):
                 return pattern
         return None
+
+    async def _enforce_active_rule_cap(self, now_iso: str | None = None) -> None:
+        """M7 fix: enforce a hard cap of ``_ACTIVE_RULE_CAP`` active rules.
+
+        When the cap is exceeded, evict the LRU rules by
+        ``last_reinforced_at ASC``. Manual rules are NOT exempt from the
+        cap — otherwise a malicious user could pin unlimited rules — but
+        in practice manual rules are much less numerous than learned
+        rules so the LRU policy still favors recent reinforcement.
+
+        Args:
+            now_iso: currently unused; reserved for future call-count
+                telemetry.
+        """
+        _ = now_iso  # reserved for telemetry
+        db = self._store._db
+        async with db.execute(
+            "SELECT COUNT(*) FROM bypass_rules WHERE is_active = 1"
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row is None:
+            return
+        count = row[0]
+        if count <= _ACTIVE_RULE_CAP:
+            return
+
+        excess = count - _ACTIVE_RULE_CAP
+        await db.execute(
+            """
+            UPDATE bypass_rules
+            SET is_active = 0
+            WHERE pattern IN (
+                SELECT pattern FROM bypass_rules
+                WHERE is_active = 1
+                ORDER BY last_reinforced_at ASC
+                LIMIT ?
+            )
+            """,
+            (excess,),
+        )
+        await db.commit()
 
 
 def _should_decay(
