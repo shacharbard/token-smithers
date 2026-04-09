@@ -30,10 +30,42 @@ class TestNormalizePatternHash:
         assert h1 != h2, "Different positional args must yield different hash"
 
     def test_pattern_hash_normalizes_arg_order(self) -> None:
-        """Sorted positional args — order must not matter."""
+        """Sorted positional args — order must not matter for pytest."""
         h1 = normalize_pattern_hash("pytest a b")
         h2 = normalize_pattern_hash("pytest b a")
         assert h1 == h2, "Positional args should be sorted before hashing"
+
+    def test_pattern_hash_distinguishes_flag_presence(self) -> None:
+        """M1 fix: `rm -rf foo` must NOT hash-equal `rm foo`.
+
+        The old normalizer stripped all `-`-prefixed tokens entirely, so
+        `rm -rf /` and `rm /` collided — a catastrophic cache-key bug when
+        the flag meaningfully changes the command's semantics.
+        """
+        h1 = normalize_pattern_hash("rm -rf foo")
+        h2 = normalize_pattern_hash("rm foo")
+        assert h1 != h2, "Flag presence must affect the hash"
+
+    def test_pattern_hash_collapses_flag_values_only(self) -> None:
+        """Flag VALUES may be collapsed (so `-p 80` == `-p 443`) but the flag itself stays."""
+        h1 = normalize_pattern_hash("nc -p 80 host.example")
+        h2 = normalize_pattern_hash("nc -p 443 host.example")
+        assert h1 == h2, "Flag-value differences should collapse"
+
+        # But removing the flag entirely must NOT match.
+        h3 = normalize_pattern_hash("nc host.example")
+        assert h1 != h3, "Flag presence still matters"
+
+    def test_pattern_hash_preserves_order_for_mv(self) -> None:
+        """M1 fix: `mv src dst` must NOT hash-equal `mv dst src`.
+
+        Arguments are order-sensitive for mv, cp, rsync, ln, diff, git diff.
+        The old normalizer sorted positionals unconditionally.
+        """
+        assert normalize_pattern_hash("mv a b") != normalize_pattern_hash("mv b a")
+        assert normalize_pattern_hash("cp a b") != normalize_pattern_hash("cp b a")
+        assert normalize_pattern_hash("rsync src dst") != normalize_pattern_hash("rsync dst src")
+        assert normalize_pattern_hash("diff a b") != normalize_pattern_hash("diff b a")
 
 
 class TestRetryDetector:
