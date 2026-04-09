@@ -424,8 +424,9 @@ class TestInstallHooksH6Concurrency:
             fsync_calls.append(fd)
             original_fsync(fd)
 
-        monkeypatch.setattr(setup_mod.os, "fsync", tracking_fsync, raising=False)
-        # Also cover top-level os module lookups
+        # _atomic_write imports os locally, so patching the top-level os
+        # module is sufficient to intercept every fsync call made from
+        # inside it.
         monkeypatch.setattr("os.fsync", tracking_fsync)
 
         settings_path = tmp_path / "settings.json"

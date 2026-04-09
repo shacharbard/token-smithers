@@ -438,6 +438,69 @@ _SCRIPT_HOOK_ENTRIES: list[dict] = [
 ]
 
 
+def _acquire_settings_lock(settings_path: Path):
+    """Open a sibling lock file and take an exclusive flock on POSIX.
+
+    Returns a file object whose lifetime owns the lock. Callers MUST close
+    it (typically via try/finally) to release. On Windows (or if fcntl is
+    unavailable) this returns None and no lock is held — best-effort only.
+
+    The lock file sits next to settings.json as ``.<name>.lock`` so we never
+    truncate settings.json itself when acquiring the lock (which would race
+    readers).
+    """
+    import os
+
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = settings_path.parent / f".{settings_path.name}.lock"
+
+    try:
+        import fcntl  # type: ignore[import-not-found]
+    except ImportError:
+        return None  # Windows: no advisory flock available
+
+    lock_fh = open(lock_path, "a+b")
+    try:
+        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+    except OSError:
+        lock_fh.close()
+        raise
+    return lock_fh
+
+
+def _release_settings_lock(lock_fh) -> None:
+    """Release the exclusive flock acquired by _acquire_settings_lock."""
+    if lock_fh is None:
+        return
+    try:
+        import fcntl  # type: ignore[import-not-found]
+
+        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        lock_fh.close()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _command_matches_script(command: str, script_name: str) -> bool:
+    """Exact-match dedup: True iff *command* contains *script_name* as a
+    path component (not as a substring of a longer filename).
+
+    H6 fix: previously used plain ``script_name in command`` which falsely
+    matched superstrings like ``pre-bash-compress-rewrite.sh`` when the
+    real script is ``bash-compress-rewrite.sh``.
+    """
+    import re
+
+    # Anchor to a non-filename-char boundary (or start of string) on the
+    # left and a non-filename-char boundary (or end/whitespace/# comment)
+    # on the right. Filename chars are [A-Za-z0-9._-].
+    pattern = rf"(?:^|[/\s]){re.escape(script_name)}(?:$|[\s#]|\Z)"
+    return re.search(pattern, command) is not None
+
+
 def install_hooks(
     settings_path: Path, undo: bool = False
 ) -> list[str]:
@@ -450,6 +513,22 @@ def install_hooks(
     Returns:
         List of installed (or removed) hook matcher names.
     """
+    import os
+
+    # H6 fix: hold an exclusive advisory flock across the read→mutate→write
+    # window so concurrent editors cannot lose each other's changes via
+    # last-writer-wins corruption.
+    lock_fh = _acquire_settings_lock(settings_path)
+    try:
+        return _install_hooks_locked(settings_path, undo=undo)
+    finally:
+        _release_settings_lock(lock_fh)
+
+
+def _install_hooks_locked(
+    settings_path: Path, undo: bool = False
+) -> list[str]:
+    """Implementation of install_hooks — caller must hold the settings lock."""
     import os
 
     # Read existing settings
@@ -512,12 +591,16 @@ def install_hooks(
             installed.append(hook_entry["matcher"])
 
     # Script-based entries: dedup by script filename in command string.
+    # H6 fix: use exact-path-component match instead of substring `in`, so
+    # foreign hooks whose commands contain a superstring of our script name
+    # (e.g., `pre-bash-compress-rewrite.sh`) don't block installation.
     for script_entry in _SCRIPT_HOOK_ENTRIES:
         script_name = script_entry["_script"]
-        # Check if already present by script filename
         already = any(
-            any(script_name in str(h.get("command", ""))
-                for h in e.get("hooks", []))
+            any(
+                _command_matches_script(str(h.get("command", "")), script_name)
+                for h in e.get("hooks", [])
+            )
             for e in existing
         )
         if already:
@@ -564,13 +647,46 @@ def _insert_after_marker(
 
 
 def _atomic_write(path: Path, data: dict) -> None:
-    """Write JSON data atomically using tmp+rename pattern."""
+    """Write JSON data atomically using tmp+fsync+rename+fsync pattern.
+
+    H6 fix: previously missed fsync(tmp fd) and fsync(parent dir), so a
+    power loss or kernel crash mid-rename could leave the settings file
+    in a corrupt or empty state. On POSIX we now:
+
+    1. Write tmp file via low-level fd, fsync it before close.
+    2. Rename tmp → target.
+    3. Open the parent directory fd, fsync it, close.
+
+    On Windows we fall back to write_text + os.rename (no parent-dir
+    fsync, which isn't meaningful there).
+    """
     import os
 
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
-    tmp_path.write_text(json.dumps(data, indent=2) + "\n")
-    os.rename(str(tmp_path), str(path))
+    payload = (json.dumps(data, indent=2) + "\n").encode("utf-8")
+
+    if os.name == "posix":
+        # Write via os-level fd so we can fsync before closing.
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        fd = os.open(str(tmp_path), flags, 0o644)
+        try:
+            os.write(fd, payload)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+        os.rename(str(tmp_path), str(path))
+
+        # Fsync the parent directory so the rename is durable.
+        dir_fd = os.open(str(path.parent), os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    else:
+        tmp_path.write_bytes(payload)
+        os.rename(str(tmp_path), str(path))
 
 
 def run_setup(undo: bool = False, install_hooks_flag: bool = False) -> int:
