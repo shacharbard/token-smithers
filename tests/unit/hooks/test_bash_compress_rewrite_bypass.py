@@ -109,3 +109,84 @@ class TestBashCompressRewriteBypass:
         assert "python3 -m token_sieve compress" in rewritten, (
             "Normal command should use compress CLI entrypoint"
         )
+
+
+class TestBashCompressRewriteBypassAnchoring:
+    """H5: NO_COMPRESS=1 inline detection must be anchored to start of raw command.
+
+    Unanchored detection allowed bypass-by-filename poisoning of the
+    auto-learn bypass counter and enabled easy evasion with `: NO_COMPRESS=1 ;`.
+    """
+
+    def test_filename_containing_marker_is_not_inline(self) -> None:
+        """A test file path containing 'NO_COMPRESS=1' must not trigger inline marker."""
+        output = run_hook("pytest tests/test_NO_COMPRESS=1_behavior.py")
+
+        rewritten = (
+            output.get("hookSpecificOutput", {})
+            .get("updatedInput", {})
+            .get("command", "")
+        )
+        assert rewritten, "Hook should still rewrite the command"
+        assert "TSIEV_INLINE_NO_COMPRESS" not in rewritten, (
+            f"Filename containing NO_COMPRESS=1 must not be treated as inline bypass; got: {rewritten}"
+        )
+
+    def test_grep_pattern_containing_marker_is_not_inline(self) -> None:
+        """A grep pattern argument containing NO_COMPRESS=1 must not trigger inline marker."""
+        output = run_hook('grep "NO_COMPRESS=1 " file.txt')
+
+        rewritten = (
+            output.get("hookSpecificOutput", {})
+            .get("updatedInput", {})
+            .get("command", "")
+        )
+        assert rewritten, "Hook should still rewrite the command"
+        assert "TSIEV_INLINE_NO_COMPRESS" not in rewritten, (
+            f"grep pattern containing NO_COMPRESS=1 must not be treated as inline bypass; got: {rewritten}"
+        )
+
+    def test_noop_prefix_bypass_evasion_is_not_inline(self) -> None:
+        """`: NO_COMPRESS=1 ; real_cmd` must NOT be treated as a legitimate inline bypass.
+
+        The `:` no-op prefix is an evasion trick: the marker would be recorded
+        as a normal inline bypass but the real command still runs unwrapped.
+        The anchored detection must reject this.
+        """
+        output = run_hook(": NO_COMPRESS=1 ; real_cmd")
+
+        rewritten = (
+            output.get("hookSpecificOutput", {})
+            .get("updatedInput", {})
+            .get("command", "")
+        )
+        assert rewritten, "Hook should still rewrite the command"
+        assert "TSIEV_INLINE_NO_COMPRESS" not in rewritten, (
+            f"`: NO_COMPRESS=1 ; ...` evasion must not be treated as inline bypass; got: {rewritten}"
+        )
+
+    def test_leading_whitespace_inline_is_still_inline(self) -> None:
+        """Leading whitespace before NO_COMPRESS=1 is still a legitimate inline bypass."""
+        output = run_hook("  NO_COMPRESS=1 pytest tests/foo.py")
+
+        rewritten = (
+            output.get("hookSpecificOutput", {})
+            .get("updatedInput", {})
+            .get("command", "")
+        )
+        assert "TSIEV_INLINE_NO_COMPRESS=1" in rewritten, (
+            f"Leading whitespace should not defeat inline detection; got: {rewritten}"
+        )
+
+    def test_canonical_inline_still_detected(self) -> None:
+        """Regression: the canonical `NO_COMPRESS=1 <cmd>` form still works."""
+        output = run_hook("NO_COMPRESS=1 pytest tests/foo.py")
+
+        rewritten = (
+            output.get("hookSpecificOutput", {})
+            .get("updatedInput", {})
+            .get("command", "")
+        )
+        assert "TSIEV_INLINE_NO_COMPRESS=1" in rewritten, (
+            f"Canonical inline NO_COMPRESS=1 must be detected; got: {rewritten}"
+        )
