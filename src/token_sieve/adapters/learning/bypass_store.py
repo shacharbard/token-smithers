@@ -26,8 +26,9 @@ if TYPE_CHECKING:
 # Environment variables that indicate CI context — skip auto-learn when any is set.
 _CI_ENV_VARS = ("CI", "GITHUB_ACTIONS", "CI_PIPELINE_ID")
 
-# Auto-learn thresholds
-_AUTO_LEARN_THRESHOLD = 5        # inline events needed
+# Auto-learn thresholds (C2 fix: raised 5→10 and require ≥2 distinct sessions)
+_AUTO_LEARN_THRESHOLD = 10       # inline events needed
+_AUTO_LEARN_MIN_SESSIONS = 2     # distinct session_ids required
 _AUTO_LEARN_WINDOW_DAYS = 14     # calendar window
 _DECAY_SESSION_THRESHOLD = 20    # distinct non-reinforcing sessions
 _DECAY_CALENDAR_DAYS = 90        # calendar days since last reinforcement
@@ -49,9 +50,11 @@ def _parse_argv(cmd: str) -> list[str]:
 def _most_specific_prefix(cmds: list[str]) -> str:
     """Compute the longest common positional argv prefix across a list of commands.
 
-    For fully identical tokens, includes them whole.  For the first diverging
-    token, computes the common string prefix (e.g. "tests/auth/test_a.py" and
-    "tests/auth/test_b.py" → "tests/auth") and appends it if non-empty.
+    C2 fix: only accept whole-path-component matches on the diverging token.
+    We require the common string to contain at least one path separator so
+    that `tests/auth/test_a.py` vs `test_utils/helpers.py` (which share "t"
+    or "test") returns only the fully-matching earlier tokens, never a bare
+    substring like "pytest t" or "pytest test".
 
     Args:
         cmds: List of shell command strings.
@@ -78,16 +81,24 @@ def _most_specific_prefix(cmds: list[str]) -> str:
         if all(p[i] == token for p in parsed):
             prefix_tokens.append(token)
         else:
-            # Try a common string prefix on this diverging token position
+            # Try a common string prefix on this diverging token position,
+            # but ONLY accept it if it ends at a path-component boundary.
+            # A bare substring of non-path tokens must not mint a rule.
             common_str = os.path.commonprefix([p[i] for p in parsed])
-            # Strip trailing path separators or partial word fragments
-            # so we don't end up with "tests/auth/test_" — trim to last separator
             if "/" in common_str:
-                common_str = common_str.rsplit("/", 1)[0]
-            elif common_str and not all(p[i].startswith(common_str) for p in parsed):
-                common_str = ""
-            if common_str:
-                prefix_tokens.append(common_str)
+                # Trim to the last full path component.
+                trimmed = common_str.rsplit("/", 1)[0]
+                # Accept only if the trimmed value is an exact prefix
+                # followed by "/" in every candidate (i.e., the first
+                # diverging component is the NEXT level, not within this
+                # token).
+                if trimmed and all(
+                    p[i] == trimmed or p[i].startswith(trimmed + "/")
+                    for p in parsed
+                ):
+                    prefix_tokens.append(trimmed)
+            # else: common_str is a bare substring of a non-path token —
+            # reject it. Do not append.
             break
 
     if not prefix_tokens:
@@ -118,10 +129,13 @@ def _cmd_matches_pattern(cmd: str, pattern: str) -> bool:
     if cmd_argv[:n] != full_tokens:
         return False
 
-    # Last pattern token: exact match OR the corresponding cmd token starts
-    # with it (path-prefix match).
+    # Last pattern token: exact match OR separator-anchored path-prefix match.
+    # C2 fix: removed bare `cmd_last.startswith(last_pat)` clause which
+    # over-matched unrelated commands (e.g. `pytest tests/auth` was
+    # matching `pytest tests/authority_tests.py`, and `kubectl g` was
+    # matching `kubectl get secret`).
     cmd_last = cmd_argv[n]
-    return cmd_last == last_pat or cmd_last.startswith(last_pat + "/") or cmd_last.startswith(last_pat)
+    return cmd_last == last_pat or cmd_last.startswith(last_pat + "/")
 
 
 class BypassStore:
@@ -311,7 +325,8 @@ class BypassStore:
 
         # Get all inline events for commands that share a common argv prefix
         async with db.execute(
-            "SELECT pattern FROM bypass_events WHERE kind = 'inline' AND occurred_at >= ?",
+            "SELECT pattern, session_id FROM bypass_events "
+            "WHERE kind = 'inline' AND occurred_at >= ?",
             (window_start,),
         ) as cursor:
             rows = await cursor.fetchall()
@@ -322,10 +337,19 @@ class BypassStore:
         if not prefix:
             return
 
-        # Count events where each event's cmd starts with this prefix
-        matching = [c for c in all_cmds if _cmd_matches_pattern(c, prefix)]
+        # C2 fix: require ≥_AUTO_LEARN_THRESHOLD events AND ≥_AUTO_LEARN_MIN_SESSIONS
+        # distinct session_ids so one runaway loop in a single session cannot
+        # mint a permanent bypass rule on its own.
+        matching_sessions: set[str] = set()
+        matching_count = 0
+        for r_cmd, r_session_id in rows:
+            if _cmd_matches_pattern(r_cmd, prefix):
+                matching_count += 1
+                matching_sessions.add(r_session_id)
 
-        if len(matching) < _AUTO_LEARN_THRESHOLD:
+        if matching_count < _AUTO_LEARN_THRESHOLD:
+            return
+        if len(matching_sessions) < _AUTO_LEARN_MIN_SESSIONS:
             return
 
         # Check no rule already exists for this pattern
