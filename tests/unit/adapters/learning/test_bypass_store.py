@@ -53,19 +53,19 @@ class TestBypassStoreInlineRecording:
 
 
 class TestBypassAutoLearn:
-    """Tests for the 5-in-14-days auto-learn trigger."""
+    """Tests for the 10-in-14-days auto-learn trigger (C2 fix raised from 5)."""
 
-    async def test_auto_learn_after_5_inline_bypasses(self, store_and_bypass) -> None:
-        """5 inline events for same prefix within 14 days → 1 bypass_rules row with source='learned'."""
+    async def test_auto_learn_after_10_inline_bypasses(self, store_and_bypass) -> None:
+        """10 inline events from ≥2 distinct sessions → 1 bypass_rules row."""
         store, bs = store_and_bypass
         now = datetime.now(timezone.utc)
 
-        # Record 5 inline bypasses within 14 days
-        for i in range(5):
-            event_time = now - timedelta(days=i)
+        # Record 10 inline bypasses within 14 days, alternating between 2 sessions
+        for i in range(10):
+            event_time = now - timedelta(hours=i)
             await bs.record_inline_bypass(
                 "pytest tests/auth/test_login.py",
-                session_id=f"s{i}",
+                session_id=f"s{i % 2}",  # two distinct session ids
                 occurred_at=event_time,
             )
 
@@ -87,10 +87,17 @@ class TestBypassAutoLearn:
             "pytest tests/auth/test_c.py",
             "pytest tests/auth/test_d.py",
             "pytest tests/auth/test_e.py",
+            "pytest tests/auth/test_f.py",
+            "pytest tests/auth/test_g.py",
+            "pytest tests/auth/test_h.py",
+            "pytest tests/auth/test_i.py",
+            "pytest tests/auth/test_j.py",
         ]
         for i, cmd in enumerate(cmds):
             await bs.record_inline_bypass(
-                cmd, session_id=f"s{i}", occurred_at=now - timedelta(days=i)
+                cmd,
+                session_id=f"s{i % 2}",  # two distinct sessions
+                occurred_at=now - timedelta(hours=i),
             )
 
         async with store._db.execute(
@@ -101,34 +108,35 @@ class TestBypassAutoLearn:
         # The common prefix for these commands is "pytest tests/auth"
         assert row[0] == "pytest tests/auth"
 
-    async def test_auto_learn_NOT_triggered_with_4_events(self, store_and_bypass) -> None:
-        """4 inline events should NOT trigger auto-learn (threshold is 5)."""
+    async def test_auto_learn_NOT_triggered_with_9_events(self, store_and_bypass) -> None:
+        """9 inline events should NOT trigger auto-learn (threshold is 10)."""
         store, bs = store_and_bypass
         now = datetime.now(timezone.utc)
 
-        for i in range(4):
+        for i in range(9):
             await bs.record_inline_bypass(
-                "pytest tests/auth", session_id=f"s{i}",
-                occurred_at=now - timedelta(days=i)
+                "pytest tests/auth",
+                session_id=f"s{i % 2}",
+                occurred_at=now - timedelta(hours=i),
             )
 
         async with store._db.execute(
             "SELECT COUNT(*) FROM bypass_rules WHERE source='learned'"
         ) as cursor:
             row = await cursor.fetchone()
-        assert row[0] == 0, "Should not auto-learn after only 4 events"
+        assert row[0] == 0, "Should not auto-learn after only 9 events"
 
     async def test_auto_learn_NOT_triggered_outside_14_days(self, store_and_bypass) -> None:
-        """5 events spanning 15+ days should NOT trigger auto-learn."""
+        """10 events spanning 15+ days should NOT trigger auto-learn."""
         store, bs = store_and_bypass
         now = datetime.now(timezone.utc)
 
-        # Spread events across 15 days (too wide)
-        for i in range(5):
+        # Spread 10 events across 18 days (too wide)
+        for i in range(10):
             await bs.record_inline_bypass(
                 "pytest tests/auth",
-                session_id=f"s{i}",
-                occurred_at=now - timedelta(days=i * 4),  # days 0, 4, 8, 12, 16
+                session_id=f"s{i % 2}",
+                occurred_at=now - timedelta(days=i * 2),  # days 0,2,...,18
             )
 
         async with store._db.execute(
@@ -136,6 +144,63 @@ class TestBypassAutoLearn:
         ) as cursor:
             row = await cursor.fetchone()
         assert row[0] == 0, "Should not auto-learn when events span >14 days"
+
+    async def test_auto_learn_NOT_triggered_from_single_session(self, store_and_bypass) -> None:
+        """C2 fix: 10+ events from a single session_id should NOT auto-learn.
+
+        Requires evidence from ≥2 distinct sessions so one runaway loop can't
+        mint a permanent rule.
+        """
+        store, bs = store_and_bypass
+        now = datetime.now(timezone.utc)
+
+        for i in range(15):
+            await bs.record_inline_bypass(
+                "pytest tests/auth",
+                session_id="only-one-session",
+                occurred_at=now - timedelta(hours=i),
+            )
+
+        async with store._db.execute(
+            "SELECT COUNT(*) FROM bypass_rules WHERE source='learned'"
+        ) as cursor:
+            row = await cursor.fetchone()
+        assert row[0] == 0, "Should not auto-learn from a single session_id"
+
+    async def test_cmd_matches_pattern_no_substring_overmatch(self) -> None:
+        """C2 fix: bare startswith must not match non-separator prefixes.
+
+        `pytest tests/auth` should NOT match `pytest tests/authority_tests.py`
+        because the match boundary is a path separator, not a string prefix.
+        """
+        from token_sieve.adapters.learning.bypass_store import _cmd_matches_pattern
+
+        assert _cmd_matches_pattern(
+            "pytest tests/auth/test_a.py", "pytest tests/auth"
+        ) is True, "separator-anchored prefix must still match"
+        assert _cmd_matches_pattern(
+            "pytest tests/auth", "pytest tests/auth"
+        ) is True, "exact match must still match"
+        assert _cmd_matches_pattern(
+            "pytest tests/authority_tests.py", "pytest tests/auth"
+        ) is False, "bare string prefix must NOT match"
+        assert _cmd_matches_pattern(
+            "kubectl get secret", "kubectl g"
+        ) is False, "bare word prefix must NOT match"
+
+    async def test_most_specific_prefix_rejects_non_path_substrings(self) -> None:
+        """C2 fix: `_most_specific_prefix` must not mint `pytest t` from divergent tokens."""
+        from token_sieve.adapters.learning.bypass_store import _most_specific_prefix
+
+        # Diverging after "pytest": "tests/a" vs "test_utils/b" share "t" but
+        # no full path component — must NOT return "pytest t".
+        result = _most_specific_prefix([
+            "pytest tests/auth/test_login.py",
+            "pytest test_utils/helpers.py",
+        ])
+        assert result in ("", "pytest"), (
+            f"common prefix must not be a bare substring, got {result!r}"
+        )
 
     async def test_ci_detection_skips_auto_learn(self, store_and_bypass) -> None:
         """When CI=true, record_inline_bypass returns early without recording any event."""
