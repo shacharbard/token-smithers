@@ -9,9 +9,12 @@ Runs as a stdio MCP server that Claude Code connects to directly.
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from collections import OrderedDict
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 import mcp.server.stdio
 import mcp.types as types
@@ -829,8 +832,14 @@ class ProxyServer:
             if self._metrics_writer is not None:
                 try:
                     self._metrics_writer.flush()
-                except Exception:
-                    pass  # best-effort: never mask shutdown errors
+                except Exception as exc:
+                    # M5 fix: log at WARNING instead of silently swallowing.
+                    # Still only catch Exception (not BaseException), so
+                    # KeyboardInterrupt / SystemExit / CancelledError
+                    # continue to propagate through the finally block.
+                    logger.warning(
+                        "metrics flush failed on shutdown: %s", exc
+                    )
 
     # Adapter name -> (module_path, class_name) registry
     _ADAPTER_REGISTRY: dict[str, tuple[str, str]] = {
