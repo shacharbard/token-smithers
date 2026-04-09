@@ -188,6 +188,53 @@ class TestBypassAutoLearn:
             "kubectl get secret", "kubectl g"
         ) is False, "bare word prefix must NOT match"
 
+    async def test_concurrent_record_inline_bypass_no_integrity_error(
+        self, store_and_bypass
+    ) -> None:
+        """H8 fix: concurrent `record_inline_bypass` calls on the same pattern
+        must not raise IntegrityError and must result in exactly one rule.
+
+        Before the fix, the auto-learn path did SELECT-then-INSERT across
+        separate commits, so two concurrent callers could both pass the
+        existence check and both INSERT, with the second raising
+        IntegrityError on the PK constraint.
+        """
+        import asyncio
+
+        store, bs = store_and_bypass
+        now = datetime.now(timezone.utc)
+
+        # Pre-load 9 events so the next two concurrent record_inline_bypass
+        # calls both cross the 10-event threshold simultaneously.
+        for i in range(9):
+            await bs.record_inline_bypass(
+                "pytest tests/auth/test_a.py",
+                session_id=f"s{i % 2}",
+                occurred_at=now - timedelta(hours=i + 1),
+            )
+
+        # Now fire two concurrent calls that would each push the count to 10+.
+        await asyncio.gather(
+            bs.record_inline_bypass(
+                "pytest tests/auth/test_b.py",
+                session_id="sX",
+                occurred_at=now,
+            ),
+            bs.record_inline_bypass(
+                "pytest tests/auth/test_c.py",
+                session_id="sY",
+                occurred_at=now,
+            ),
+        )
+
+        async with store._db.execute(
+            "SELECT COUNT(*) FROM bypass_rules WHERE source='learned'"
+        ) as cursor:
+            row = await cursor.fetchone()
+        # Must be exactly 1 — not 0 (IntegrityError swallowed incorrectly)
+        # and not 2 (duplicate INSERTs).
+        assert row[0] == 1, f"Expected exactly 1 learned rule, got {row[0]}"
+
     async def test_most_specific_prefix_rejects_non_path_substrings(self) -> None:
         """C2 fix: `_most_specific_prefix` must not mint `pytest t` from divergent tokens."""
         from token_sieve.adapters.learning.bypass_store import _most_specific_prefix
