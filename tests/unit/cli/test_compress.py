@@ -401,6 +401,36 @@ class TestShadowLoggerWiring:
             "ShadowLogger.maybe_log must be called with is_retry=False on normal path"
         )
 
+    def test_shadow_logger_called_with_cmd_kwarg(self, monkeypatch, capsys):
+        """C3-p2-wire: maybe_log must receive cmd=<command> so the denylist guard can fire."""
+        import token_sieve.cli.compress as cm
+
+        class NeverRetryDetector:
+            def record_command(self, cmd, ts=None, sequence_id=None):
+                return False
+
+        maybe_log_calls: list[dict] = []
+
+        class FakeShadowLogger:
+            async def maybe_log(self, **kwargs):
+                maybe_log_calls.append(kwargs)
+
+        monkeypatch.setattr(cm, "_get_retry_detector", lambda: NeverRetryDetector())
+        monkeypatch.setattr(cm, "_get_shadow_logger", lambda: FakeShadowLogger())
+        monkeypatch.setenv("TSIEV_WRAP_CMD", "bash -c 'echo CMD_KWARG_CHECK'")
+
+        rc = run_compress([])
+        assert rc == 0
+        assert maybe_log_calls, "ShadowLogger.maybe_log must be called"
+        for call in maybe_log_calls:
+            assert "cmd" in call, (
+                "ShadowLogger.maybe_log must be called with cmd=<command> kwarg "
+                "(C3-p2 denylist guard is inert without it)"
+            )
+            assert call["cmd"] == "bash -c 'echo CMD_KWARG_CHECK'", (
+                f"cmd kwarg must equal the wrapped command, got {call['cmd']!r}"
+            )
+
     def test_determinism_unchanged_when_shadow_samples_change(
         self, monkeypatch, capsys
     ):
