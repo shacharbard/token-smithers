@@ -104,7 +104,8 @@ CREATE TABLE IF NOT EXISTS compression_events (
     strategy_name TEXT NOT NULL,
     original_tokens INTEGER NOT NULL,
     compressed_tokens INTEGER NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    is_regret BOOLEAN DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_compression_events_strategy
     ON compression_events(strategy_name, created_at);
@@ -143,7 +144,35 @@ CREATE TABLE IF NOT EXISTS tool_usage_sessions (
     PRIMARY KEY (tool_name, session_id),
     FOREIGN KEY (session_id) REFERENCES sessions(session_id)
 );
+
+-- C4 fix: tool_pipeline_config was originally created only in migration v2
+-- but must be part of the fresh-DB schema so that the fresh-DB init path
+-- (which skips straight to version 7) still has it available.
+CREATE TABLE IF NOT EXISTS tool_pipeline_config (
+    tool_name TEXT NOT NULL,
+    server_id TEXT NOT NULL DEFAULT 'default',
+    adapter_order TEXT NOT NULL DEFAULT '[]',
+    disabled_adapters TEXT DEFAULT '[]',
+    eval_count INTEGER DEFAULT 0,
+    regret_streak INTEGER DEFAULT 0,
+    last_eval_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (tool_name, server_id)
+);
 """
+
+
+def _split_sql(script: str) -> list[str]:
+    """Split a semicolon-separated SQL script into individual statements.
+
+    C4 helper: used by migration blocks that need to run DDL inside an
+    explicit BEGIN/COMMIT transaction. ``executescript`` can't be used
+    because it commits any pending transaction on entry, so we issue one
+    ``execute()`` per statement. The DDL in ``_V6_SCHEMA_SQL`` /
+    ``_V7_SCHEMA_SQL`` does not use semicolons inside strings so a naive
+    split on ``;`` is safe here.
+    """
+    return [s for s in (stmt.strip() for stmt in script.split(";")) if s]
 
 
 class SQLiteLearningStore:
@@ -179,16 +208,57 @@ class SQLiteLearningStore:
         await db.execute("PRAGMA cache_size=64000")
         await db.execute("PRAGMA foreign_keys=ON")
 
-        # Run schema migration (base + v6 + v7 tables for fresh DBs)
-        await db.executescript(_SCHEMA_SQL + _V6_SCHEMA_SQL + _V7_SCHEMA_SQL)
+        # C4 fix: detect whether the DB is fresh (no tables at all) before
+        # touching schema. Fresh DBs can run the full base + v6 + v7 schema
+        # at once; existing DBs must ONLY run per-version migration blocks
+        # so each block is atomic and never jumps ahead of schema_version.
+        async with db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name='schema_version'"
+        ) as cursor:
+            _sv_row = await cursor.fetchone()
+        is_fresh = _sv_row is None
 
-        # Record schema version if not already present
+        if is_fresh:
+            # Fresh DB: run the full DDL in one executescript and seed every
+            # historical version row up to 7. Existing tests (and consumers)
+            # assume each completed migration leaves its own schema_version
+            # row on disk, so we preserve that invariant.
+            await db.executescript(
+                _SCHEMA_SQL + _V6_SCHEMA_SQL + _V7_SCHEMA_SQL
+            )
+            now = datetime.now(timezone.utc).isoformat()
+            for v in range(1, 8):
+                await db.execute(
+                    "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
+                    (v, now),
+                )
+            await db.commit()
+            current_version = 7
+            return cls(db, max_cache_entries)
+
+        # --- Existing DB: run per-version migrations atomically. ---
+        # Each migration block wraps its DDL + version-bump INSERT in a single
+        # `BEGIN IMMEDIATE; ... COMMIT` transaction so that a crash mid-block
+        # leaves the DB at the previous version with no partial tables.
+        #
+        # C4 fix: no unconditional top-level DDL for v6/v7 here. Those tables
+        # ONLY come into existence inside their owning migration block.
+        #
+        # The base `_SCHEMA_SQL` IS still run idempotently because several
+        # migration blocks (v2 ALTER TABLE compression_events, v4 sessions
+        # bump) assume base tables exist. All statements in `_SCHEMA_SQL`
+        # are `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` so
+        # this is a no-op on a correctly-versioned DB.
+        await db.executescript(_SCHEMA_SQL)
+
         async with db.execute(
             "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1"
         ) as cursor:
             row = await cursor.fetchone()
             current_version = row[0] if row else 0
             if current_version == 0:
+                # Legacy DB with schema_version table but no row recorded.
                 now = datetime.now(timezone.utc).isoformat()
                 await db.execute(
                     "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
@@ -285,13 +355,21 @@ class SQLiteLearningStore:
         # consumed schema version 5 for sessions.ended_at. Using v6 here is the
         # correct sequential number; the test file is named _v5 for plan traceability.
         if current_version < 6:
-            await db.executescript(_V6_SCHEMA_SQL)
-            now = datetime.now(timezone.utc).isoformat()
-            await db.execute(
-                "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
-                (6, now),
-            )
-            await db.commit()
+            # C4 fix: wrap DDL + version bump in an explicit transaction so
+            # the step is atomic. A crash mid-block rolls back the DDL.
+            await db.execute("BEGIN IMMEDIATE")
+            try:
+                for stmt in _split_sql(_V6_SCHEMA_SQL):
+                    await db.execute(stmt)
+                now = datetime.now(timezone.utc).isoformat()
+                await db.execute(
+                    "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
+                    (6, now),
+                )
+                await db.commit()
+            except BaseException:
+                await db.rollback()
+                raise
             current_version = 6
 
         # --- Migration v7: bypass_rules + bypass_events tables ---
@@ -300,13 +378,21 @@ class SQLiteLearningStore:
         # Using v7 here is the correct sequential number; the test file is named
         # _v6 for plan traceability (DEVN-01 deviation).
         if current_version < 7:
-            await db.executescript(_V7_SCHEMA_SQL)
-            now = datetime.now(timezone.utc).isoformat()
-            await db.execute(
-                "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
-                (7, now),
-            )
-            await db.commit()
+            # C4 fix: wrap DDL + version bump in an explicit transaction so
+            # the step is atomic. A crash mid-block rolls back the DDL.
+            await db.execute("BEGIN IMMEDIATE")
+            try:
+                for stmt in _split_sql(_V7_SCHEMA_SQL):
+                    await db.execute(stmt)
+                now = datetime.now(timezone.utc).isoformat()
+                await db.execute(
+                    "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
+                    (7, now),
+                )
+                await db.commit()
+            except BaseException:
+                await db.rollback()
+                raise
 
         return cls(db, max_cache_entries)
 
