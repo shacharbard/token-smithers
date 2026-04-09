@@ -5,6 +5,7 @@ Task 3 of 09-03: verify sampling rates, blob handling, ON CONFLICT update semant
 from __future__ import annotations
 
 import random
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -367,3 +368,158 @@ class TestShadowLoggerAggregation:
         assert first_seen_initial == first_seen_after, (
             "first_seen must not change after subsequent updates"
         )
+
+
+class TestShadowLoggerC3p2Denylist:
+    """C3-p2: maybe_log must consult sensitive_denylist.matches(cmd) and skip logging."""
+
+    @pytest.fixture()
+    async def store(self):
+        from token_sieve.adapters.learning.sqlite_store import SQLiteLearningStore
+        return await SQLiteLearningStore.connect(":memory:")
+
+    @pytest.fixture()
+    def logger(self, store):
+        return ShadowLogger(store=store, rng_seed=0)  # always sample
+
+    async def test_sensitive_cmd_denylist_hit_skips_logging(
+        self, store, logger
+    ) -> None:
+        """When cmd matches denylist, no row is inserted and no blob stored."""
+        raw = b"AKIAIOSFODNN7EXAMPLE secret credentials"
+        await logger.maybe_log(
+            pattern_hash="sensitive_hash",
+            adapter_name="passthrough",
+            raw_bytes=raw,
+            compressed_bytes=len(raw),
+            is_retry=True,
+            cmd="aws sts get-caller-identity",
+        )
+
+        async with store._db.execute(
+            "SELECT sample_count, representative_blob FROM shadow_pattern_stats "
+            "WHERE pattern_hash='sensitive_hash'"
+        ) as cur:
+            row = await cur.fetchone()
+
+        assert row is None, (
+            "Denylist-matching cmd must not produce a shadow_pattern_stats row"
+        )
+
+    async def test_benign_cmd_still_logs_normally(self, store, logger) -> None:
+        """After denylist wiring, benign commands must still be logged."""
+        raw = b"benign output"
+        await logger.maybe_log(
+            pattern_hash="benign_hash",
+            adapter_name="passthrough",
+            raw_bytes=raw,
+            compressed_bytes=len(raw),
+            is_retry=True,
+            cmd="ls -la",
+        )
+
+        async with store._db.execute(
+            "SELECT sample_count FROM shadow_pattern_stats "
+            "WHERE pattern_hash='benign_hash'"
+        ) as cur:
+            row = await cur.fetchone()
+
+        assert row is not None and row[0] == 1, (
+            "Benign cmd must still be logged after denylist wiring"
+        )
+
+    async def test_cmd_none_still_logs_backward_compatible(
+        self, store, logger
+    ) -> None:
+        """When cmd is not provided (legacy callers), logging proceeds."""
+        raw = b"legacy call"
+        await logger.maybe_log(
+            pattern_hash="legacy_hash",
+            adapter_name="passthrough",
+            raw_bytes=raw,
+            compressed_bytes=len(raw),
+            is_retry=True,
+        )
+
+        async with store._db.execute(
+            "SELECT sample_count FROM shadow_pattern_stats "
+            "WHERE pattern_hash='legacy_hash'"
+        ) as cur:
+            row = await cur.fetchone()
+
+        assert row is not None and row[0] == 1
+
+
+class TestShadowLoggerC3p2RetryEventsRetention:
+    """C3-p2: retry_events table must have a retention pass (default 30d)."""
+
+    @pytest.fixture()
+    async def store(self):
+        from token_sieve.adapters.learning.sqlite_store import SQLiteLearningStore
+        return await SQLiteLearningStore.connect(":memory:")
+
+    @pytest.fixture()
+    def logger(self, store):
+        return ShadowLogger(store=store, rng_seed=0)
+
+    async def test_cleanup_old_retry_events_deletes_rows_older_than_30_days(
+        self, store, logger
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        old = (now - timedelta(days=45)).isoformat()
+        recent = (now - timedelta(days=5)).isoformat()
+
+        # Insert two rows: one stale, one recent
+        await store._db.execute(
+            "INSERT INTO retry_events (pattern_hash, occurred_at, threshold_at_event, session_id) "
+            "VALUES (?, ?, ?, ?)",
+            ("old_pattern", old, 5, "sess-old"),
+        )
+        await store._db.execute(
+            "INSERT INTO retry_events (pattern_hash, occurred_at, threshold_at_event, session_id) "
+            "VALUES (?, ?, ?, ?)",
+            ("recent_pattern", recent, 5, "sess-recent"),
+        )
+        await store._db.commit()
+
+        await logger.cleanup_old_retry_events(max_age_days=30)
+
+        async with store._db.execute(
+            "SELECT pattern_hash FROM retry_events ORDER BY pattern_hash"
+        ) as cur:
+            rows = await cur.fetchall()
+
+        assert [r[0] for r in rows] == ["recent_pattern"], (
+            f"Expected only recent_pattern to survive, got {rows}"
+        )
+
+
+class TestShadowLoggerC3p2DecompressionBomb:
+    """C3-p2: reading representative_blob must cap decompressed size."""
+
+    def test_safe_decompress_blob_caps_decompressed_size(self) -> None:
+        """A blob whose decompressed size exceeds max_size raises, does not OOM."""
+        import zstandard
+
+        from token_sieve.adapters.learning.shadow_logger import _safe_decompress_blob
+
+        # Build a highly-compressible 10 MB payload — compresses to < 1 KB
+        payload = b"A" * (10 * 1024 * 1024)
+        blob = zstandard.ZstdCompressor().compress(payload)
+        # Sanity: blob itself is tiny
+        assert len(blob) < 10_000
+
+        # Cap at 8 MB — must refuse to materialize the full 10 MB
+        with pytest.raises(Exception):
+            _safe_decompress_blob(blob, max_size=8 * 1024 * 1024)
+
+    def test_safe_decompress_blob_within_cap_succeeds(self) -> None:
+        """A blob whose decompressed size fits within max_size round-trips."""
+        import zstandard
+
+        from token_sieve.adapters.learning.shadow_logger import _safe_decompress_blob
+
+        payload = b"hello world " * 1000
+        blob = zstandard.ZstdCompressor().compress(payload)
+        out = _safe_decompress_blob(blob, max_size=8 * 1024 * 1024)
+        assert out == payload
