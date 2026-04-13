@@ -959,9 +959,21 @@ class ProxyServer:
             size_gate_threshold=config.compression.size_gate_threshold,
         )
 
+        # Auto-disable TreeSitterASTExtractor for self-compressing backends.
+        # These tools already optimize their output; AST skeleton extraction
+        # on top destroys usable content, forcing wasteful re-reads.
+        _SELF_COMPRESSING_BACKENDS = frozenset({
+            'jcodemunch-mcp', 'jdocmunch-mcp', 'context-mode',
+        })
+        backend_cmd = config.backend.command or ''
+        _auto_disable_ast = backend_cmd in _SELF_COMPRESSING_BACKENDS
+
         if config.compression.enabled:
             for adapter_cfg in config.compression.adapters:
                 if not adapter_cfg.enabled:
+                    continue
+
+                if _auto_disable_ast and adapter_cfg.name == 'tree_sitter_ast':
                     continue
 
                 registry_entry = cls._ADAPTER_REGISTRY.get(adapter_cfg.name)
