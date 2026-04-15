@@ -619,11 +619,16 @@ class TestSchemaCacheRebind:
 
 
 class TestHandleCallToolEmptyText:
-    """Finding 3 (P1): Empty TextContent from backend must not crash."""
+    """Empty TextContent from backend must be replaced with a non-empty sentinel.
+
+    The Anthropic Messages API rejects tool_result blocks containing empty text
+    ("messages: text content blocks must be non-empty"), so the proxy MUST NOT
+    forward an empty TextContent — doing so poisons every subsequent API turn
+    with HTTP 400.
+    """
 
     @pytest.mark.anyio
-    async def test_empty_text_content_passes_through(self) -> None:
-        """Backend returning empty text should pass through without error."""
+    async def test_empty_text_replaced_with_sentinel(self) -> None:
         from token_sieve.server.proxy import ProxyServer
 
         empty_result = types.CallToolResult(
@@ -642,11 +647,14 @@ class TestHandleCallToolEmptyText:
             metrics_sink=sink,
         )
 
-        # Should not raise
         result = await proxy.handle_call_tool("some_tool", {})
         assert result.isError is False
         assert len(result.content) == 1
-        assert result.content[0].text == ""
+        assert isinstance(result.content[0], types.TextContent)
+        assert result.content[0].text != "", (
+            "Proxy must never emit an empty text block — "
+            "Anthropic API rejects them with HTTP 400."
+        )
 
 
 class TestMutatingCallGlobalInvalidation:
