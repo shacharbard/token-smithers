@@ -687,10 +687,16 @@ class ProxyServer:
             if isinstance(item, types.TextContent):
                 has_text = True
 
-                # Guard: empty text passes through unchanged (ContentEnvelope
-                # rejects empty content, and there's nothing to compress)
+                # Guard: replace empty text with a non-empty sentinel.
+                # Why: the Anthropic Messages API rejects tool_result blocks
+                # containing empty text ("messages: text content blocks must be
+                # non-empty") and the rejection poisons every subsequent turn
+                # with HTTP 400. ContentEnvelope also rejects empty content, so
+                # there's nothing to compress — emit a sentinel and move on.
                 if not item.text:
-                    compressed_content.append(item)
+                    compressed_content.append(
+                        types.TextContent(type="text", text="(empty)")
+                    )
                     continue
 
                 envelope = ContentEnvelope(
